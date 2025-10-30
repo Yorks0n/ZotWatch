@@ -10,30 +10,17 @@ ZotWatcher 是一个基于 Zotero 数据构建个人兴趣画像，并持续监�
 - **输出发布**：生成 `reports/feed.xml` 供 RSS 订阅，并通过 GitHub Pages 发布；同样可生成 HTML 报告或推送回 Zotero。
 
 ## 快速开始
-1. **克隆仓库并准备环境**
-   ```bash
-   git clone <your-repo-url>
-   cd ZotWatcher
-   mamba env create -n ZotWatcher --file requirements.txt  # 或使用 pip 安装
-   conda activate ZotWatcher
-   ```
+1. Fork 或在 GitHub 上新建一个空仓库，将本项目的代码推送到自己的仓库。
+2. 在 GitHub 仓库的 Settings → Secrets and variables → Actions 中添加以下 Repository secrets：
+   - `ZOTERO_API_KEY`，登录 Zotero 网站的[个人账户](https://www.zotero.org/settings/)后，在 Settings - Security - Applications 处点击 Create new private key，其中 Personal Library 给予 Allow library access，Default Group Permissions 给予 Read Only 权限后保存获得。本 API 用于获取 Zotero 数据库中现有的文章信息，用于生成兴趣画像。
+   - `ZOTERO_USER_ID`，该 ID 可从上述 Settings - Security - Applications 处 Create new private key 按钮下方一行 `User ID: Your user ID for use in API calls is ******` 获取。
+   - （可选）`ALTMETRIC_KEY`，暂时未调试 ALTMETRIC 来源的热门文章信息。
+   - （可选）`OPENALEX_MAILTO`、`CROSSREF_MAILTO`，用于部分网站 API 请求时需要。
 
-2. **配置环境变量**
-   在仓库根目录创建 `.env` 或 GitHub Secrets，至少包含：
-   - `ZOTERO_API_KEY`：Zotero Web API 访问密钥
-   - `ZOTERO_USER_ID`：Zotero 用户 ID（数字）
-   可选：
-   - `ALTMETRIC_KEY`：用于获取 Altmetric 数据
-   - `OPENALEX_MAILTO`/`CROSSREF_MAILTO`：覆盖默认监测邮箱
+3. 确保 `.github/workflows/daily_watch.yml` 中根据需求调整 `python -m src.cli watch` 的参数（例如 `--top`、`--report`）。
+4. 推送代码到仓库后，GitHub Actions 会每日 UTC 06:00 自动运行，并在仓库的 Reports 中生成 RSS/HTML。若需立即运行，可在 Actions 页面手动触发 `Daily Watch & RSS` 工作流。可能需要在仓库页面的 Setting - Pages 中设置 Build and deployment 来源为 GitHub Actions。
+5. 生成的 GitHub Pages 地址需要在末尾加上`/feed.xml`，该地址可以导入 Zotero 的 RSS 订阅，或者直接导入 RSS 阅读器。
 
-3. **本地运行**
-   ```bash
-   # 首次全量画像构建
-   python -m src.cli profile --full
-
-   # 日常监测（生成 RSS + HTML）
-   python -m src.cli watch --rss --report --top 50
-   ```
 
 ## GitHub Actions 部署
 1. **开启 Git**
@@ -65,6 +52,32 @@ Workflow 的触发条件：
 - 手动 `workflow_dispatch`
 
 > 注：流水线会使用 GitHub Actions 缓存保存 `data/profile.sqlite` / `data/faiss.index` / `data/profile.json`。缓存键按年月 (`YYYYMM`) 生成，首次命中前或跨月后会自动执行 `python -m src.cli profile --full` 重新构建画像。
+
+## 本地运行
+1. **克隆仓库并准备环境**
+   ```bash
+   git clone <your-repo-url>
+   cd ZotWatcher
+   mamba env create -n ZotWatcher --file requirements.txt  # 或使用 pip 安装
+   conda activate ZotWatcher
+   ```
+
+2. **配置环境变量**
+   在仓库根目录创建 `.env` 或 GitHub Secrets，至少包含：
+   - `ZOTERO_API_KEY`：Zotero Web API 访问密钥
+   - `ZOTERO_USER_ID`：Zotero 用户 ID（数字）
+   可选：
+   - `ALTMETRIC_KEY`：用于获取 Altmetric 数据
+   - `OPENALEX_MAILTO`/`CROSSREF_MAILTO`：覆盖默认监测邮箱
+
+3. **本地运行**
+   ```bash
+   # 首次全量画像构建
+   python -m src.cli profile --full
+
+   # 日常监测（生成 RSS + HTML）
+   python -m src.cli watch --rss --report --top 50
+   ```
 
 ## 目录结构
 ```
