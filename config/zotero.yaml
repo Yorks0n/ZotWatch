@@ -1,0 +1,6 @@
+mode: "api"
+api:
+  user_id: "${ZOTERO_USER_ID}"
+  api_key_env: "ZOTERO_API_KEY"
+  page_size: 100
+  polite_delay_ms: 200

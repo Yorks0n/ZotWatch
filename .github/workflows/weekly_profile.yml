@@ -1,0 +1,32 @@
+name: Weekly Profile Rebuild
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"
+  workflow_dispatch:
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      ZOTERO_API_KEY: ${{ secrets.ZOTERO_API_KEY }}
+      ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
+      ALTMETRIC_KEY: ${{ secrets.ALTMETRIC_KEY }}
+      OPENALEX_MAILTO: you@example.com
+      CROSSREF_MAILTO: you@example.com
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python -m src.cli profile --weekly
+      - name: Commit artifacts
+        run: |
+          git config user.name "gh-actions"
+          git config user.email "actions@github.com"
+          git add data/ reports/ || true
+          git commit -m "weekly profile rebuild" || true
+          git push || true

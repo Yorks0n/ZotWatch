@@ -1,0 +1,19 @@
+window_days: 7
+openalex:
+  enabled: false
+  mailto: "you@example.com"
+crossref:
+  enabled: true
+  mailto: "you@example.com"
+arxiv:
+  enabled: true
+  categories: ["q-bio.GN", "cs.LG"]
+biorxiv:
+  enabled: true
+  from_days_ago: 7
+medrxiv:
+  enabled: false
+  from_days_ago: 7
+altmetric:
+  enabled: false
+  api_key_env: "ALTMETRIC_KEY"

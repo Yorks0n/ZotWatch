@@ -1,0 +1,17 @@
+weights:
+  similarity: 0.45
+  recency: 0.15
+  citations: 0.15
+  altmetric: 0.10
+  journal_quality: 0.04
+  author_bonus: 0.02
+  venue_bonus: 0.04
+thresholds:
+  must_read: 0.75
+  consider: 0.5
+decay_days:
+  fast: 3
+  medium: 7
+  slow: 30
+whitelist_authors: []
+whitelist_venues: []

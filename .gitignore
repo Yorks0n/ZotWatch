@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+.venv/
+.env
+
+# Data artifacts
+/data/*.sqlite
+/data/*.index
+/data/profile.json
+/data/cache/
+/data/cache/*
+
+# Reports
+/reports/*.html
+/reports/feed.xml
+/public/
+
+# Logs and caches
+*.log
+*.tmp
+*.cache
+
+# OS
+.DS_Store
