@@ -3,6 +3,9 @@ name: Daily Watch & RSS
 on:
   schedule:
     - cron: "0 6 * * *"
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -16,15 +19,15 @@ jobs:
       ZOTERO_API_KEY: ${{ secrets.ZOTERO_API_KEY }}
       ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
       ALTMETRIC_KEY: ${{ secrets.ALTMETRIC_KEY }}
-      OPENALEX_MAILTO: you@example.com
-      CROSSREF_MAILTO: you@example.com
+      OPENALEX_MAILTO: ${{ secrets.OPENALEX_MAILTO }}
+      CROSSREF_MAILTO: ${{ secrets.CROSSREF_MAILTO }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - run: python -m src.cli watch --rss --top 100
+      - run: python -m src.cli watch --rss --top 20
       - name: Prepare Pages
         run: |
           mkdir -p public
