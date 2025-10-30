@@ -26,7 +26,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Ensure data directories
+        run: |
+          mkdir -p data reports
+      - name: Compute cache key suffix
+        id: cache-key
+        run: echo "CACHE_KEY=$(date +%Y%m)" >> $GITHUB_ENV
+      - name: Restore profile cache
+        id: cache-profile
+        uses: actions/cache@v4
+        with:
+          path: |
+            data/profile.sqlite
+            data/faiss.index
+            data/profile.json
+          key: profile-${{ env.CACHE_KEY }}
       - run: pip install -r requirements.txt
+      - name: Build Zotero profile
+        if: steps.cache-profile.outputs.cache-hit != 'true'
+        run: python -m src.cli profile --full
       - run: python -m src.cli watch --rss --top 20
       - name: Prepare Pages
         run: |

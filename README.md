@@ -64,6 +64,8 @@ Workflow 的触发条件：
 - 当 `main` 分支有新的 push
 - 手动 `workflow_dispatch`
 
+> 注：流水线会使用 GitHub Actions 缓存保存 `data/profile.sqlite` / `data/faiss.index` / `data/profile.json`。缓存键按年月 (`YYYYMM`) 生成，首次命中前或跨月后会自动执行 `python -m src.cli profile --full` 重新构建画像。
+
 ## 目录结构
 ```
 ├─ src/                   # 主流程模块
@@ -84,4 +86,4 @@ Workflow 的触发条件：
 - **推荐为空**：检查是否所有候选都超出 7 天窗口或预印本比例被限制；可调节 CLI 的 `--top`、`_filter_recent` 的天数或 `max_ratio`。
 
 ## 许可证
-自定义或遵循所属仓库要求。
+本项目采用 [MIT License](LICENSE)。
