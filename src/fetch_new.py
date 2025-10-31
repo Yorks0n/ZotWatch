@@ -302,18 +302,22 @@ class CandidateFetcher:
             title = _clean_title(entry.get("title"))
             if not title:
                 continue
+            doi = entry.get("doi")
+            rel_link = entry.get("rel_link") or entry.get("url")
+            if not rel_link and doi:
+                rel_link = f"https://doi.org/{doi}"
             results.append(
                 CandidateWork(
                     source=base,
-                    identifier=entry.get("doi") or entry.get("biorxiv_id") or title,
+                    identifier=doi or entry.get("biorxiv_id") or title,
                     title=title,
                     abstract=entry.get("abstract"),
                     authors=[a.strip() for a in entry.get("authors", "").split(";") if a.strip()],
-                    doi=entry.get("doi"),
-                    url=entry.get("url"),
+                    doi=doi,
+                    url=rel_link,
                     published=_parse_date(entry.get("date")),
                     venue=base,
-                    extra={"category": entry.get("category")},
+                    extra={"category": entry.get("category"), "version": entry.get("version")},
                 )
             )
         return results
