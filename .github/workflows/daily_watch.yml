@@ -2,7 +2,7 @@ name: Daily Watch & RSS
 
 on:
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "5 22 * * *"  #北京时间6点05运行
   push:
     branches:
       - main
