@@ -10,48 +10,39 @@ ZotWatcher 是一个基于 Zotero 数据构建个人兴趣画像，并持续监�
 - **输出发布**：生成 `reports/feed.xml` 供 RSS 订阅，并通过 GitHub Pages 发布；同样可生成 HTML 报告或推送回 Zotero。
 
 ## 快速开始
-1. Fork 或在 GitHub 上新建一个空仓库，将本项目的代码推送到自己的仓库。
-2. 在 GitHub 仓库的 Settings → Secrets and variables → Actions 中添加以下 Repository secrets：
-   - `ZOTERO_API_KEY`，登录 Zotero 网站的[个人账户](https://www.zotero.org/settings/)后，在 Settings - Security - Applications 处点击 Create new private key，其中 Personal Library 给予 Allow library access，Default Group Permissions 给予 Read Only 权限后保存获得。本 API 用于获取 Zotero 数据库中现有的文章信息，用于生成兴趣画像。
-   - `ZOTERO_USER_ID`，该 ID 可从上述 Settings - Security - Applications 处 Create new private key 按钮下方一行 `User ID: Your user ID for use in API calls is ******` 获取。
-   - （可选）`ALTMETRIC_KEY`，暂时未调试 ALTMETRIC 来源的热门文章信息。
-   - （可选）`OPENALEX_MAILTO`、`CROSSREF_MAILTO`，用于部分网站 API 请求时需要。
+1. 登录GitHub后，打开仓库页面 [ZotWatch](https://github.com/Yorks0n/ZotWatch)
 
-3. 确保 `.github/workflows/daily_watch.yml` 中根据需求调整 `python -m src.cli watch` 的参数（例如 `--top`、`--report`）。
-4. 推送代码到仓库后，GitHub Actions 会每日 UTC 06:00 自动运行，并在仓库的 Reports 中生成 RSS/HTML。若需立即运行，可在 Actions 页面手动触发 `Daily Watch & RSS` 工作流。可能需要在仓库页面的 Setting - Pages 中设置 Build and deployment 来源为 GitHub Actions。
-5. 生成的 GitHub Pages 地址需要在末尾加上`/feed.xml`，该地址可以导入 Zotero 的 RSS 订阅，或者直接导入 RSS 阅读器。
+2. 在顶部点击**Fork**按钮创建分支，将仓库复制到自己的GitHub账号下：**Fork - Create fork**
 
+3. 到fork后的ZotWatch页面，点击设置（**Settings**），在设置页面左侧找到**Secrets and variables**，展开并点击下级的**Action**。
+   ![image1](images/image1.png)
 
-## GitHub Actions 部署
-1. **开启 Git**
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial ZotWatcher setup"
-   git remote add origin <your-github-repo-url>
-   git push -u origin main
-   ```
+4. 点击右侧的**New repository secret**按钮，添加几个必要的Repository secrets
+   ![image2](images/image2.png)
 
-2. **配置 Secrets**（仓库 Settings → Secrets and variables → Actions）
-   - `ZOTERO_API_KEY`
-   - `ZOTERO_USER_ID`
-   - （可选）`ALTMETRIC_KEY` 等
+5. 添加几个必要的键值对，包括
+   • `ZOTERO_API_KEY`，此为获取 Zotero 数据库中现有个人信息所必须。登录 Zotero 网站的[个人账户](https://www.zotero.org/settings/)后，在 **Settings - Security - Applications** 处点击 **Create new private key**，其中 Personal Library 给予 Allow library access，Default Group Permissions 给予 Read Only 权限，保存获得 API。
+   • `ZOTERO_USER_ID`，该 ID 可从上述 **Settings - Security - Applications** 处 **Create new private key** 按钮下方一行 `User ID: Your user ID for use in API calls is ******` 获取。
+   • `OPENALEX_MAILTO`，邮箱地址，用于部分网站 API 请求时的礼貌标注。
+   • `CROSSREF_MAILTO`，邮箱地址，用于部分网站 API 请求时的礼貌标注。
+   ![image3](images/image3.png)
 
-3. **启用 GitHub Pages**
-   - Settings → Pages → Source 选择 “GitHub Actions”。
+6. 回到自己仓库首页，点击顶部**Settings**，在左侧找到**Pages**，在页面中为其**Source**选择**GitHub Actions**，使得生成的RSS页面直接发布到GitHub Pages。
 
-Workflow 文件 `.github/workflows/daily_watch.yml` 中的关键命令：
-```yaml
-- run: python -m src.cli watch --rss --top 100
-```
-可根据需求添加 `--report` 等选项。
+   ![image4](images/image4.png)
 
-Workflow 的触发条件：
-- 每天 **UTC 06:00** 定时运行
-- 当 `main` 分支有新的 push
-- 手动 `workflow_dispatch`
+7. 接下来点击顶部的**Actions**栏目，并确认开启GitHub Actins
+   ![image5](images/image5.png)
 
-> 注：流水线会使用 GitHub Actions 缓存保存 `data/profile.sqlite` / `data/faiss.index` / `data/profile.json`。缓存键按年月 (`YYYYMM`) 生成，首次命中前或跨月后会自动执行 `python -m src.cli profile --full` 重新构建画像。
+8. 点击左侧**Daily Watch & RSS**，默认情况下fork来仓库的Workflow是关闭状态，点击右侧Enable workflow激活。
+   ![image6](images/image6.png)
+
+9. 此时仓库理论上会在每天早上六点自动运行，要立刻运行请点击**Run workflow**。首次运行需要全量生成向量数据库，会比较慢，可以点击**All workflows**查看运行状态。
+
+   ![image7](images/image7.png)
+
+10. 运行完后去 **Settings - Pages** 页面上可以看到自己的站点地址，此时直接访问此地址并不能打开，需要复制地址并在末尾加上`/feed.xml`，例如`https://[username].github.io/ZotWatch/feed.xml`，该地址可以导入 Zotero 的 RSS 订阅，或用于导入你喜欢的 RSS 阅读器。
+   ![image8](images/image8.png)
 
 ## 本地运行
 1. **克隆仓库并准备环境**
@@ -74,9 +65,9 @@ Workflow 的触发条件：
    ```bash
    # 首次全量画像构建
    python -m src.cli profile --full
-
+   
    # 日常监测（生成 RSS + HTML）
-   python -m src.cli watch --rss --report --top 50
+   python -m src.cli watch --rss --report --top 20
    ```
 
 ## 目录结构
