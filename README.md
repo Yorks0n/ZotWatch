@@ -20,12 +20,13 @@ ZotWatcher 是一个基于 Zotero 数据构建个人兴趣画像，并持续监�
 4. 点击右侧的**New repository secret**按钮，添加几个必要的Repository secrets
    ![image2](images/image2.png)
 
-5. 添加几个必要的键值对，包括
-   • `ZOTERO_API_KEY`，此为获取 Zotero 数据库中现有个人信息所必须。登录 Zotero 网站的[个人账户](https://www.zotero.org/settings/)后，在 **Settings - Security - Applications** 处点击 **Create new private key**，其中 Personal Library 给予 Allow library access，Default Group Permissions 给予 Read Only 权限，保存获得 API。
-   • `ZOTERO_USER_ID`，该 ID 可从上述 **Settings - Security - Applications** 处 **Create new private key** 按钮下方一行 `User ID: Your user ID for use in API calls is ******` 获取。
-   • `OPENALEX_MAILTO`，邮箱地址，用于部分网站 API 请求时的礼貌标注。
-   • `CROSSREF_MAILTO`，邮箱地址，用于部分网站 API 请求时的礼貌标注。
-   ![image3](images/image3.png)
+5. 添加几个必要的键值对，包括：
+
+   - `ZOTERO_API_KEY`，此为获取 Zotero 数据库中现有个人信息所必须。登录 Zotero 网站的[个人账户](https://www.zotero.org/settings/)后，在 **Settings - Security - Applications** 处点击 **Create new private key**，其中 Personal Library 给予 Allow library access，Default Group Permissions 给予 Read Only 权限，保存获得 API。
+   - `ZOTERO_USER_ID`，该 ID 可从上述 **Settings - Security - Applications** 处 **Create new private key** 按钮下方一行 `User ID: Your user ID for use in API calls is ******` 获取。
+   -  `OPENALEX_MAILTO`，邮箱地址，用于部分网站 API 请求时的礼貌标注。
+   -  `CROSSREF_MAILTO`，邮箱地址，用于部分网站 API 请求时的礼貌标注。
+     ![image3](images/image3.png)
 
 6. 回到自己仓库首页，点击顶部**Settings**，在左侧找到**Pages**，在页面中为其**Source**选择**GitHub Actions**，使得生成的RSS页面直接发布到GitHub Pages。
 
@@ -42,7 +43,7 @@ ZotWatcher 是一个基于 Zotero 数据构建个人兴趣画像，并持续监�
    ![image7](images/image7.png)
 
 10. 运行完后去 **Settings - Pages** 页面上可以看到自己的站点地址，此时直接访问此地址并不能打开，需要复制地址并在末尾加上`/feed.xml`，例如`https://[username].github.io/ZotWatch/feed.xml`，该地址可以导入 Zotero 的 RSS 订阅，或用于导入你喜欢的 RSS 阅读器。
-   ![image8](images/image8.png)
+       ![image8](images/image8.png)
 
 ## 本地运行
 1. **克隆仓库并准备环境**
