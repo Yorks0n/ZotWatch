@@ -1,4 +1,11 @@
 window_days: 7
+public_api:
+  enabled: true
+  base_url: "https://rbsfoisrcaxacwodbuzg.supabase.co/functions/v1"
+  publishable_key: "sb_publishable_-FMvey8-oTinBjTp5Ru4DA_L6QLFa9v"
+  api_key_env: "SUPABASE_PUBLISHABLE_KEY"
+  page_size: 200
+  timeout_seconds: 30
 openalex:
   enabled: false
   mailto: "you@example.com"

@@ -70,8 +70,28 @@ class MedRxivConfig(BaseModel):
     from_days_ago: int = 30
 
 
+class PublicCandidatesApiConfig(BaseModel):
+    enabled: bool = True
+    base_url: str = "https://rbsfoisrcaxacwodbuzg.supabase.co/functions/v1"
+    publishable_key: Optional[str] = None
+    api_key_env: str = "SUPABASE_PUBLISHABLE_KEY"
+    page_size: int = 200
+    timeout_seconds: int = 30
+
+    def api_key(self) -> str:
+        if self.publishable_key:
+            return self.publishable_key
+        key = os.getenv(self.api_key_env)
+        if not key:
+            raise RuntimeError(
+                f"Either 'publishable_key' or environment variable '{self.api_key_env}' is required for the public candidate API."
+            )
+        return key
+
+
 class SourcesConfig(BaseModel):
     window_days: int = 30
+    public_api: PublicCandidatesApiConfig = Field(default_factory=PublicCandidatesApiConfig)
     openalex: OpenAlexConfig = Field(default_factory=OpenAlexConfig)
     crossref: CrossRefConfig = Field(default_factory=CrossRefConfig)
     arxiv: ArxivConfig = Field(default_factory=ArxivConfig)
