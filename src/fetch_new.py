@@ -148,7 +148,6 @@ class CandidateFetcher:
         api_key = config.api_key()
         headers = {
             "apikey": api_key,
-            "Authorization": f"Bearer {api_key}",
         }
         include_preprints = any(source in {"arxiv", "biorxiv", "medrxiv"} for source in public_sources)
         offset = 0
