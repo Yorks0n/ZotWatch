@@ -7,6 +7,7 @@ from typing import Iterable, List, Optional
 
 import requests
 
+from .http_utils import request_with_retry
 from .models import ZoteroItem
 from .settings import Settings
 from .storage import ProfileStorage
@@ -54,11 +55,19 @@ class ZoteroClient:
         next_url = self.base_items_url
         while next_url:
             logger.debug("Fetching Zotero page: %s", next_url)
-            resp = self.session.get(next_url, params=params if next_url == self.base_items_url else None, headers=headers)
+            resp = request_with_retry(
+                self.session,
+                "GET",
+                next_url,
+                params=params if next_url == self.base_items_url else None,
+                headers=headers,
+                timeout=30,
+                logger=logger,
+                context=f"Zotero items request {next_url}",
+            )
             if resp.status_code == 304:
                 logger.info("Zotero API indicated no changes since version %s", since_version)
                 return
-            resp.raise_for_status()
             yield resp
             next_url = _parse_next_link(resp.headers.get("Link"))
             headers = {}
@@ -69,8 +78,15 @@ class ZoteroClient:
         if since_version is None:
             return []
         url = f"{self.base_user_url}/deleted"
-        resp = self.session.get(url, params={"since": since_version})
-        resp.raise_for_status()
+        resp = request_with_retry(
+            self.session,
+            "GET",
+            url,
+            params={"since": since_version},
+            timeout=30,
+            logger=logger,
+            context=f"Zotero deleted-items request since version {since_version}",
+        )
         payload = resp.json() or {}
         deleted_items = payload.get("items", [])
         logger.info("Fetched %d deleted item tombstones", len(deleted_items))
@@ -102,23 +118,30 @@ class ZoteroIngestor:
         logger.info("Starting Zotero ingest (full=%s, since_version=%s)", full, since_version)
         max_version = since_version or 0
 
-        for response in self.client.iter_items(since_version=since_version):
-            items = response.json()
-            response_version = int(response.headers.get("Last-Modified-Version", 0))
-            max_version = max(max_version, response_version)
-            for raw_item in items:
-                zot_item = ZoteroItem.from_zotero_api(raw_item)
-                content_hash = hash_content(
-                    zot_item.title,
-                    zot_item.abstract or "",
-                    ",".join(zot_item.creators),
-                    ",".join(zot_item.tags),
-                )
-                self.storage.upsert_item(zot_item, content_hash=content_hash)
-                stats.fetched += 1
-                stats.updated += 1
+        try:
+            for response in self.client.iter_items(since_version=since_version):
+                items = response.json()
+                response_version = int(response.headers.get("Last-Modified-Version", 0))
+                max_version = max(max_version, response_version)
+                for raw_item in items:
+                    zot_item = ZoteroItem.from_zotero_api(raw_item)
+                    content_hash = hash_content(
+                        zot_item.title,
+                        zot_item.abstract or "",
+                        ",".join(zot_item.creators),
+                        ",".join(zot_item.tags),
+                    )
+                    self.storage.upsert_item(zot_item, content_hash=content_hash)
+                    stats.fetched += 1
+                    stats.updated += 1
+        except requests.RequestException as exc:
+            logger.warning("Zotero ingest aborted after partial progress: %s", exc)
 
-        deleted_keys = self.client.fetch_deleted(since_version=max_version if not full else None)
+        try:
+            deleted_keys = self.client.fetch_deleted(since_version=max_version if not full else None)
+        except requests.RequestException as exc:
+            logger.warning("Skipping deleted-item sync because Zotero API was unavailable: %s", exc)
+            deleted_keys = []
         self.storage.remove_items(deleted_keys)
         stats.removed = len(deleted_keys)
 

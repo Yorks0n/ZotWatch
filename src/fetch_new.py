@@ -4,6 +4,7 @@ import logging
 import json
 import html
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
@@ -11,17 +12,21 @@ from typing import List
 import feedparser
 import requests
 
+from .http_utils import request_with_retry
 from .models import CandidateWork
 from .settings import Settings
 from .utils import ensure_isoformat, iso_to_datetime, utc_now
 
 logger = logging.getLogger(__name__)
+ARXIV_REQUEST_DELAY_SECONDS = 3.1
+ARXIV_MAX_RESULTS = 50
 
 
 class CandidateFetcher:
     def __init__(self, settings: Settings, base_dir: Path):
         self.settings = settings
         self.session = requests.Session()
+        self.session.headers.update({"User-Agent": "ZotWatcher/0.1 (https://github.com/Yorks0n/ZotWatch)"})
         self.base_dir = Path(base_dir)
         self.cache_path = self.base_dir / "data" / "cache" / "candidate_cache.json"
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -29,9 +34,11 @@ class CandidateFetcher:
         self.top_venues = self._load_top_venues()
 
     def fetch_all(self) -> List[CandidateWork]:
+        stale_candidates: List[CandidateWork] | None = None
         cached = self._load_cache()
         if cached:
             fetched_at, candidates = cached
+            stale_candidates = candidates
             age = datetime.now(timezone.utc) - fetched_at
             if age <= timedelta(hours=12):
                 logger.info(
@@ -47,22 +54,64 @@ class CandidateFetcher:
         window_days = self.settings.sources.window_days
         since = datetime.now(timezone.utc) - timedelta(days=window_days)
         results: List[CandidateWork] = []
+        enabled_sources = 0
+        failed_sources = 0
 
         if self.settings.sources.openalex.enabled:
-            results.extend(self._fetch_openalex(since))
+            enabled_sources += 1
+            source_results, failed = self._run_fetch_source("OpenAlex", lambda: self._fetch_openalex(since))
+            results.extend(source_results)
+            failed_sources += int(failed)
         if self.settings.sources.crossref.enabled:
-            results.extend(self._fetch_crossref(since))
-            results.extend(self._fetch_crossref_top_venues(since))
+            enabled_sources += 1
+            source_results, failed = self._run_fetch_source("Crossref", lambda: self._fetch_crossref(since))
+            results.extend(source_results)
+            failed_sources += int(failed)
+            top_venue_results, _ = self._run_fetch_source(
+                "Crossref top venues",
+                lambda: self._fetch_crossref_top_venues(since),
+            )
+            results.extend(top_venue_results)
         if self.settings.sources.arxiv.enabled:
-            results.extend(self._fetch_arxiv())
+            enabled_sources += 1
+            source_results, failed = self._run_fetch_source("arXiv", self._fetch_arxiv)
+            results.extend(source_results)
+            failed_sources += int(failed)
         if self.settings.sources.biorxiv.enabled:
-            results.extend(self._fetch_biorxiv(window_days))
+            enabled_sources += 1
+            source_results, failed = self._run_fetch_source(
+                "bioRxiv",
+                lambda: self._fetch_biorxiv(self.settings.sources.biorxiv.from_days_ago),
+            )
+            results.extend(source_results)
+            failed_sources += int(failed)
         if self.settings.sources.medrxiv.enabled:
-            results.extend(self._fetch_biorxiv(window_days, medrxiv=True))
+            enabled_sources += 1
+            source_results, failed = self._run_fetch_source(
+                "medRxiv",
+                lambda: self._fetch_biorxiv(self.settings.sources.medrxiv.from_days_ago, medrxiv=True),
+            )
+            results.extend(source_results)
+            failed_sources += int(failed)
+
+        if enabled_sources and failed_sources == enabled_sources and stale_candidates:
+            logger.warning(
+                "All %d enabled sources failed; falling back to stale cache with %d candidates",
+                enabled_sources,
+                len(stale_candidates),
+            )
+            return stale_candidates
 
         logger.info("Fetched %d candidate works", len(results))
         self._save_cache(results)
         return results
+
+    def _run_fetch_source(self, source_name: str, fetcher) -> tuple[List[CandidateWork], bool]:
+        try:
+            return fetcher(), False
+        except requests.RequestException as exc:
+            logger.warning("%s fetch failed; continuing without this source: %s", source_name, exc)
+            return [], True
 
     def _load_top_venues(self) -> List[str]:
         if not self.profile_path.exists():
@@ -132,8 +181,15 @@ class CandidateFetcher:
             "mailto": self.settings.sources.openalex.mailto,
         }
         logger.info("Fetching OpenAlex works since %s", since.date())
-        resp = self.session.get(url, params=params)
-        resp.raise_for_status()
+        resp = request_with_retry(
+            self.session,
+            "GET",
+            url,
+            params=params,
+            timeout=30,
+            logger=logger,
+            context="OpenAlex fetch",
+        )
         data = resp.json()
         results = []
         for item in data.get("results", []):
@@ -171,8 +227,15 @@ class CandidateFetcher:
             "mailto": self.settings.sources.crossref.mailto,
         }
         logger.info("Fetching Crossref works since %s", since.date())
-        resp = self.session.get(url, params=params, timeout=30)
-        resp.raise_for_status()
+        resp = request_with_retry(
+            self.session,
+            "GET",
+            url,
+            params=params,
+            timeout=30,
+            logger=logger,
+            context="Crossref fetch",
+        )
         message = resp.json().get("message", {})
         results = []
         for item in message.get("items", []):
@@ -214,8 +277,15 @@ class CandidateFetcher:
                 "mailto": self.settings.sources.crossref.mailto,
             }
             try:
-                resp = self.session.get("https://api.crossref.org/works", params=params, timeout=30)
-                resp.raise_for_status()
+                resp = request_with_retry(
+                    self.session,
+                    "GET",
+                    "https://api.crossref.org/works",
+                    params=params,
+                    timeout=30,
+                    logger=logger,
+                    context=f"Crossref top venue fetch for {venue}",
+                )
             except Exception as exc:
                 logger.warning("Failed to fetch Crossref top venue %s: %s", venue, exc)
                 continue
@@ -259,11 +329,27 @@ class CandidateFetcher:
             "search_query": query,
             "sortBy": "submittedDate",
             "sortOrder": "descending",
-            "max_results": 100,
+            "max_results": ARXIV_MAX_RESULTS,
         }
-        logger.info("Fetching arXiv entries for categories: %s", ", ".join(categories))
-        resp = self.session.get(url, params=params, timeout=30)
-        resp.raise_for_status()
+        logger.info(
+            "Fetching arXiv entries for categories: %s (max_results=%d, delay=%.1fs)",
+            ", ".join(categories),
+            ARXIV_MAX_RESULTS,
+            ARXIV_REQUEST_DELAY_SECONDS,
+        )
+        # arXiv's legacy API asks clients to keep to a single request every 3 seconds.
+        time.sleep(ARXIV_REQUEST_DELAY_SECONDS)
+        resp = request_with_retry(
+            self.session,
+            "GET",
+            url,
+            params=params,
+            timeout=60,
+            logger=logger,
+            context="arXiv fetch",
+        )
+        if "rate exceeded" in resp.text.lower():
+            raise requests.HTTPError("arXiv API rate limit exceeded", response=resp)
         feed = feedparser.parse(resp.text)
         results = []
         for entry in feed.entries:
@@ -294,8 +380,14 @@ class CandidateFetcher:
         from_date = to_date - timedelta(days=window_days)
         url = f"https://api.biorxiv.org/details/{base}/{from_date:%Y-%m-%d}/{to_date:%Y-%m-%d}"
         logger.info("Fetching %s preprints from %s to %s", base, from_date.date(), to_date.date())
-        resp = self.session.get(url, timeout=30)
-        resp.raise_for_status()
+        resp = request_with_retry(
+            self.session,
+            "GET",
+            url,
+            timeout=30,
+            logger=logger,
+            context=f"{base} fetch",
+        )
         data = resp.json()
         results = []
         for entry in data.get("collection", []):
