@@ -4,6 +4,7 @@ import logging
 import json
 import html
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
@@ -17,12 +18,15 @@ from .settings import Settings
 from .utils import ensure_isoformat, iso_to_datetime, utc_now
 
 logger = logging.getLogger(__name__)
+ARXIV_REQUEST_DELAY_SECONDS = 3.1
+ARXIV_MAX_RESULTS = 50
 
 
 class CandidateFetcher:
     def __init__(self, settings: Settings, base_dir: Path):
         self.settings = settings
         self.session = requests.Session()
+        self.session.headers.update({"User-Agent": "ZotWatcher/0.1 (https://github.com/Yorks0n/ZotWatch)"})
         self.base_dir = Path(base_dir)
         self.cache_path = self.base_dir / "data" / "cache" / "candidate_cache.json"
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -75,14 +79,17 @@ class CandidateFetcher:
             failed_sources += int(failed)
         if self.settings.sources.biorxiv.enabled:
             enabled_sources += 1
-            source_results, failed = self._run_fetch_source("bioRxiv", lambda: self._fetch_biorxiv(window_days))
+            source_results, failed = self._run_fetch_source(
+                "bioRxiv",
+                lambda: self._fetch_biorxiv(self.settings.sources.biorxiv.from_days_ago),
+            )
             results.extend(source_results)
             failed_sources += int(failed)
         if self.settings.sources.medrxiv.enabled:
             enabled_sources += 1
             source_results, failed = self._run_fetch_source(
                 "medRxiv",
-                lambda: self._fetch_biorxiv(window_days, medrxiv=True),
+                lambda: self._fetch_biorxiv(self.settings.sources.medrxiv.from_days_ago, medrxiv=True),
             )
             results.extend(source_results)
             failed_sources += int(failed)
@@ -322,18 +329,27 @@ class CandidateFetcher:
             "search_query": query,
             "sortBy": "submittedDate",
             "sortOrder": "descending",
-            "max_results": 100,
+            "max_results": ARXIV_MAX_RESULTS,
         }
-        logger.info("Fetching arXiv entries for categories: %s", ", ".join(categories))
+        logger.info(
+            "Fetching arXiv entries for categories: %s (max_results=%d, delay=%.1fs)",
+            ", ".join(categories),
+            ARXIV_MAX_RESULTS,
+            ARXIV_REQUEST_DELAY_SECONDS,
+        )
+        # arXiv's legacy API asks clients to keep to a single request every 3 seconds.
+        time.sleep(ARXIV_REQUEST_DELAY_SECONDS)
         resp = request_with_retry(
             self.session,
             "GET",
             url,
             params=params,
-            timeout=30,
+            timeout=60,
             logger=logger,
             context="arXiv fetch",
         )
+        if "rate exceeded" in resp.text.lower():
+            raise requests.HTTPError("arXiv API rate limit exceeded", response=resp)
         feed = feedparser.parse(resp.text)
         results = []
         for entry in feed.entries:
