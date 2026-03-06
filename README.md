@@ -1,5 +1,7 @@
 # ZotWatcher
 
+[English Version](README.en.md)
+
 ZotWatcher 是一个基于 Zotero 数据构建个人兴趣画像，并持续监测学术信息源的新文献推荐流程。它每日在 GitHub Actions 上运行，将最新候选文章生成 RSS/HTML 报告，必要时也可在本地手动执行。
 
 ## 功能概览
