@@ -1,0 +1,9 @@
+[
+  {"source":"crossref","identifier":"alpha","title":"Alpha <cells> & evidence","abstract":"Synthetic <script>alert('x')</script> & text.","authors":["Ada Example"],"doi":"10.0000/alpha","url":"https://example.invalid/alpha?a=1&b=2","published":"2026-01-14T12:00:00Z","venue":"Example Journal","metrics":{"cited_by":9,"altmetric":3}},
+  {"source":"openalex","identifier":"beta","title":"Beta molecules","published":"2026-01-10T12:00:00Z","venue":"Low SJR","metrics":{}},
+  {"source":"crossref","identifier":"gamma","title":"Gamma galaxies","published":"2026-01-14T12:00:00Z"},
+  {"source":"crossref","identifier":"delta","title":"Delta chemistry","published":"2026-01-14T12:00:00Z"},
+  {"source":"arxiv","identifier":"epsilon","title":"Epsilon preprint","published":"2026-01-15T12:00:00Z"},
+  {"source":"crossref","identifier":"zeta","title":"Zeta ancient","published":"2025-01-01T12:00:00Z","metrics":{"is-referenced-by":1}},
+  {"source":"crossref","identifier":"eta","title":"Eta undated"}
+]
