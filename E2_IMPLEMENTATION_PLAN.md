@@ -39,7 +39,7 @@ E2 只在 ZotWatch 仓库建立配置边界。它实现 `zotwatch.yaml` v2 的�
 普通产品仍以 feature 为中心；service ID 是 Web/模板生成的内部引用。schema 支持：
 
 - `PresetServiceConfig`: `provider`, `model`；provider 必须是 registry 中的 preset。
-- `CustomServiceConfig`: `provider: custom`, `protocol`, `base_url`, `model`, `connection_id`。
+- `CustomServiceConfig`: `provider: custom`, `protocol`, `base_url`, `model`, `connection_id`；`connection_id` 只接受 registry 固定的 `custom-1`、`custom-2`、`custom-3`、`custom-4`。
 - `FeatureRouteConfig`: `enabled`, `service`；关闭时禁止 service，开启时必须引用已存在 service。
 
 内部解析结果为不可变的 `ResolvedFeatureRoute`：
@@ -49,6 +49,8 @@ feature -> service id -> provider/protocol -> capability -> credential reference
 ```
 
 它只含 opaque credential reference 和可公开的路由 metadata，不含 credential value。一个 service 可以被多个 feature 引用；Custom 的同一 `connection_id` 也可被多个 service/model 复用。若相同 `connection_id` 在不同 service 中声明了不同 protocol 或 normalized base URL，则以 `CUSTOM_CONNECTION_CONFLICT` 拒绝，避免 key 被错发到另一 endpoint。
+
+`connection_id` 是 personal workspace 内稳定但非用户命名的固定引用，不是任意 UUID。Web 将来只显示用户可理解的连接标签、protocol、provider 类型和 model；它在写配置时分配一个未占用的固定 ID，普通 UI 不展示该 ID。这样 personal GitHub Actions 只凭 workspace config 和 reusable workflow 已声明的四个 slots 即可解析，不依赖 Cloudflare/D1 的额外映射表。
 
 ### 2.3 加载结果与错误
 
@@ -106,6 +108,7 @@ ProviderDefinition
   credential_ref
   recommended_models
   implementation_status
+  standard_ui_status
 
 ProtocolDefinition
   id
@@ -119,20 +122,26 @@ CredentialDefinition
   required_fields
 ```
 
-`recommended_models` 只是可选 UI hint，不是 allowlist。`implementation_status` 将“配置契约已声明”与“网络 adapter 已验证可调用”分开；E2 中所有 AI network adapter 状态保持 `unimplemented`，因此 registry 不会虚报运行能力。
+`recommended_models` 只是可选 UI hint，不是 allowlist。Registry 明确区分三个状态：
+
+1. `registered`：定义存在，因此 schema/semantic validation 可以识别该 provider/protocol。
+2. `implementation_status`：`implemented` 或 `unimplemented`，只表示当前 engine revision 是否有通过契约测试的可执行 adapter。
+3. `standard_ui_status`：`selectable` 或 `hidden`，表示普通 UI 是否应提供该选项；只有已注册、adapter 已实现且明确批准进入普通产品面的定义才能为 `selectable`。
+
+E2 中所有 AI network adapter 状态保持 `unimplemented`，普通 UI 状态保持 `hidden`。合法的 preset/Custom 配置仍可通过 schema/semantic validation，但 validation success 不等于 feature 当前可执行；运行能力必须另查 registry runtime status，并在未实现时返回脱敏的 `PROVIDER_ADAPTER_UNAVAILABLE`。
 
 ### 4.2 首批 preset 和 capability
 
 E2 按已批准契约集中注册以下 ID：
 
-| Preset | 配置 capability | 固定 credential mapping | E2 runtime status |
-| --- | --- | --- | --- |
-| `voyage` | `native-rerank` | `VOYAGE_API_KEY` | `unimplemented` |
-| `dashscope` | `generation` | `DASHSCOPE_API_KEY` | `unimplemented` |
-| `openrouter` | `generation` | `OPENROUTER_API_KEY` | `unimplemented` |
-| `deepseek` | `generation` | `DEEPSEEK_API_KEY` | `unimplemented` |
-| `openai` | `generation` | `OPENAI_API_KEY` | `unimplemented` |
-| `anthropic` | `generation` | `ANTHROPIC_API_KEY` | `unimplemented` |
+| Preset | 配置 capability | 固定 credential mapping | E2 adapter | 普通 UI |
+| --- | --- | --- | --- | --- |
+| `voyage` | `native-rerank` | `VOYAGE_API_KEY` | `unimplemented` | `hidden` |
+| `dashscope` | `generation` | `DASHSCOPE_API_KEY` | `unimplemented` | `hidden` |
+| `openrouter` | `generation` | `OPENROUTER_API_KEY` | `unimplemented` | `hidden` |
+| `deepseek` | `generation` | `DEEPSEEK_API_KEY` | `unimplemented` | `hidden` |
+| `openai` | `generation` | `OPENAI_API_KEY` | `unimplemented` | `hidden` |
+| `anthropic` | `generation` | `ANTHROPIC_API_KEY` | `unimplemented` | `hidden` |
 
 这些 capability 只用于配置兼容性检查，不代表 E2 会调用服务。`summary` 要求 `generation`；`rerank` 接受 `native-rerank` 或契约允许的结构化 `generation`。Embedding 仍固定 local，不从 AI registry 路由。
 
@@ -147,7 +156,16 @@ Custom 第一版只注册：
 
 ### 4.4 Credential mapping
 
-Preset credential reference 固定映射到上表的 provider-specific slot。Custom 只在 config 保存 UUID `connection_id`；四个固定 Custom slots 及其结构由 registry/credential resolver 预声明。普通 schema 不包含实际 slot 名，resolver 也不允许用 config 字符串动态索引 env/Secret。
+Preset credential reference 固定映射到上表的 provider-specific slot。Custom 只在 config 保存固定 opaque `connection_id`。Registry 内部使用不可变映射：
+
+```text
+custom-1 -> ZOTWATCH_CUSTOM_1_CREDENTIAL
+custom-2 -> ZOTWATCH_CUSTOM_2_CREDENTIAL
+custom-3 -> ZOTWATCH_CUSTOM_3_CREDENTIAL
+custom-4 -> ZOTWATCH_CUSTOM_4_CREDENTIAL
+```
+
+这些右侧名称只属于 engine/workflow implementation contract，不进入普通 schema、生成的 config 或普通 Web UI。Resolver 先把已校验的 `connection_id` 转成内部枚举，再以固定 `match`/静态 mapping 选择预声明 slot；不调用 `os.getenv(connection_id)`，不接受任意 slot/env 字符串，也不扫描环境变量。每个 slot 中的结构化记录仍需与 config 的 protocol 和 normalized base URL 一致。personal GitHub Actions 因此可完全离线完成映射，不依赖 Cloudflare/D1。
 
 E2 实现 metadata resolution 和存在性状态，不读取或发送 AI key。credential 缺失不影响整个 config 的合法性；只有未来执行已启用 AI feature 时才需要检查相应 slot。实现中不出现统一 `AI_API_KEY`，错误、`repr`、日志和测试 snapshot 不包含 key 或 Custom endpoint。
 
@@ -230,10 +248,10 @@ Adapter 还提供纯函数 `project_legacy_to_v2(settings) -> LegacyMappingRepor
 
 ### 8.2 Registry/credential tests
 
-- provider/protocol ID 唯一，credential mapping 唯一，四个 Custom slots 数量固定。
+- provider/protocol ID 唯一，credential mapping 唯一；`custom-1` 至 `custom-4` 与四个 slots 一一固定映射，其他 ID 失败。
 - schema enum/artifact 由 registry 生成且无漂移；其他模块不维护 provider allowlist。
 - model 推荐不是 allowlist；能力只来自 provider/protocol。
-- registry 的 runtime status 在 E2 全为 `unimplemented`，不会被 config success 误报为可调用。
+- registry 的 runtime status 在 E2 全为 `unimplemented`、普通 UI status 全为 `hidden`；不会被 config success 误报为可调用或可选。
 - 缺全部 AI credentials 时 config/validate 成功；错误和对象 `repr` 不泄漏 credential/Custom URL。
 
 ### 8.3 Legacy compatibility tests
