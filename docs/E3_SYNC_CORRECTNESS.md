@@ -1,6 +1,6 @@
 # E3 Zotero sync correctness contract and release note
 
-Status: implementation complete locally; remote PR gates pending. E3 starts from `v2-e2-baseline` (`2c276da8696618fcd4acd4b34eaf8b1b900219a4`).
+Status: implementation complete in [PR #6](https://github.com/Yorks0n/ZotWatch/pull/6); local and remote gates passed. E3 starts from `v2-e2-baseline` (`2c276da8696618fcd4acd4b34eaf8b1b900219a4`).
 
 ## Mirror invariant
 
@@ -80,6 +80,8 @@ E3 adds no irreversible schema migration. Code can be pinned back to `v2-e2-base
 
 ## Regression evidence
 
-The tests-only commit failed against the unchanged E2 production tree with **25 failed, exit code 1**; see [E3_RED_BASELINE.md](../tests/E3_RED_BASELINE.md). The final verification record will be added after E0/E1/E2/E3 local and remote gates complete. Original E0 goldens are not regenerated.
+The tests-only commit failed against the unchanged E2 production tree with **25 failed, exit code 1**; see [E3_RED_BASELINE.md](../tests/E3_RED_BASELINE.md). Original E0 goldens were not regenerated.
 
-After implementation, the focused sync/ingestion/pipeline set passes **46 tests**. The local forced packaging run builds a fresh sdist and wheel, invokes both wheel and editable engines outside the source checkout, runs E0/E1/E2/E3 together, and reports **167 passed, 0 skipped**. Remote PR evidence remains pending until the branch is pushed.
+After implementation, the focused sync/ingestion/pipeline set passes **46 tests**. Two consecutive local characterization runs each report **151 passed** with the 16 installation-only cases skipped by design. The local forced packaging run builds a fresh sdist and wheel, invokes both wheel and editable engines outside the source checkout, runs E0/E1/E2/E3 together, and reports **167 passed, 0 skipped**.
+
+The first complete PR head passed both remote workflows: [E0 characterization](https://github.com/Yorks0n/ZotWatch/actions/runs/34472415891) and [E1 packaging and E2 config](https://github.com/Yorks0n/ZotWatch/actions/runs/34472415895), including installed-engine and immutable-E0 checks. A final docs-only evidence commit is subject to the same PR checks.
