@@ -10,6 +10,32 @@ ZotWatcher is a workflow that builds a personal interest profile from Zotero dat
 - **Publishing outputs**: Generates `reports/feed.xml` for RSS subscription, publishes it through GitHub Pages, and can also generate HTML reports or push results back to Zotero.
 
 ## Quick Start
+
+### v2 development: install the engine, use a separate workspace
+
+E1 adds an installable entry point for Python 3.11+. Run the installation commands inside the ZotWatch checkout; no PyPI release is published:
+
+```sh
+python -m pip install .
+# For development: python -m pip install -e .
+zotwatch --help
+zotwatch profile --workspace /path/to/personal-workspace --full
+zotwatch watch --workspace /path/to/personal-workspace --rss --report
+```
+
+Keep the existing three YAML files in the personal workspace's `config/` directory and configure Zotero credentials in the environment or that workspace's `.env`. Copy and edit the original YAML examples when preparing a new workspace; installation does not provision personal configuration.
+
+| Option | Default / behavior |
+| --- | --- |
+| `--workspace` | Current directory. The legacy `--base-dir` alias remains; both must resolve to the same directory when supplied together. |
+| `--state-dir` | workspace/data; existing SQLite, FAISS, profile and cache formats. |
+| `--reports-dir` | workspace/reports; existing RSS/HTML filenames. |
+| `--journal-metrics` | legacy by default: workspace/data/journal_metrics.csv with unchanged missing-file handling. Use bundled explicitly for the original packaged CSV, or pass a CSV path. |
+
+Relative state, report and CSV paths resolve against the workspace. `python -m src.cli profile|watch ...` remains available, also defaulting to the current directory; specify `--base-dir` when calling it elsewhere. Only workspace/.env is loaded, with existing environment values taking precedence.
+
+E1 preserves ranking, synchronization, caching and default SJR behavior. Explicitly selecting bundled metrics can change scores for a workspace that previously had no metrics. The original fork/Actions setup follows below.
+
 1. Sign in to GitHub and open the repository page: [ZotWatch](https://github.com/Yorks0n/ZotWatch)
 
 2. Click the **Fork** button at the top to create your own copy under your GitHub account: **Fork - Create fork**

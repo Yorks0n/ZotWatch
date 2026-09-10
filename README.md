@@ -12,6 +12,32 @@ ZotWatcher 是一个基于 Zotero 数据构建个人兴趣画像，并持续监�
 - **输出发布**：生成 `reports/feed.xml` 供 RSS 订阅，并通过 GitHub Pages 发布；同样可生成 HTML 报告或推送回 Zotero。
 
 ## 快速开始
+
+### v2 开发版：安装后从独立 workspace 调用
+
+E1 提供 Python 3.11+ 可安装入口，继续使用下文原有三份 YAML 和 Zotero 凭据配置。以下安装命令在 ZotWatch checkout 内运行（不发布 PyPI 版本）：
+
+```sh
+python -m pip install .
+# 开发时可改用：python -m pip install -e .
+zotwatch --help
+zotwatch profile --workspace /path/to/personal-workspace --full
+zotwatch watch --workspace /path/to/personal-workspace --rss --report
+```
+
+个人 workspace 需要自己的 `config/zotero.yaml`、`config/sources.yaml`、`config/scoring.yaml`（可从本仓库原配置复制后编辑），凭据通过环境或该 workspace 的 `.env` 提供。包不会复制个人配置或下载模型到源码仓库。
+
+| 参数 | 默认 / 含义 |
+| --- | --- |
+| `--workspace` | 当前工作目录；旧 `--base-dir` 仍可使用，两者同时指定必须指向同一路径 |
+| `--state-dir` | workspace/data，保留 SQLite、FAISS、profile 与候选缓存原格式 |
+| `--reports-dir` | workspace/reports，保留原 RSS/HTML 文件名 |
+| `--journal-metrics` | 默认 legacy：仍读取 workspace/data/journal_metrics.csv，缺失处理不变；bundled 显式读取包内原版 CSV，也可指定 CSV 路径 |
+
+相对 state/reports/CSV 路径相对 workspace。旧 `python -m src.cli profile|watch ...` 保留，但默认 workspace 也改为当前目录；在源码目录外使用旧命令时请指明 `--base-dir`。只加载 workspace/.env，不自动搜索 engine 目录或父目录；已有环境变量优先。
+
+E1 不改变推荐算法、同步、缓存策略或默认 SJR 缺失行为。`--journal-metrics bundled` 是主动选用指标数据，可能使原本没有指标的 workspace 得到不同分数。原 1.x fork/Actions 使用方法继续如下。
+
 1. 登录GitHub后，打开仓库页面 [ZotWatch](https://github.com/Yorks0n/ZotWatch)
 
 2. 在顶部点击**Fork**按钮创建分支，将仓库复制到自己的GitHub账号下：**Fork - Create fork**

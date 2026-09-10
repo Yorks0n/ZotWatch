@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 from zotwatch.paths import RuntimePaths
+from zotwatch.resources import journal_metrics_path
 
 from .build_profile import ProfileBuilder
 from .dedupe import DedupeEngine
@@ -28,6 +29,8 @@ def main(argv: Optional[list[str]] = None) -> None:
     parser.add_argument("--base-dir", help="Compatibility alias for --workspace")
     parser.add_argument("--state-dir", help="State directory (default: workspace/data)")
     parser.add_argument("--reports-dir", help="Reports directory (default: workspace/reports)")
+    parser.add_argument("--journal-metrics", default="legacy",
+                        help="legacy (default), bundled, or a workspace-relative/absolute CSV path")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument("--full", action="store_true", help="Full rebuild (profile command)")
     parser.add_argument("--weekly", action="store_true", help="Alias for --full in profile command")
@@ -56,6 +59,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         elif args.command == "watch":
             if args.reports_dir is not None:
                 path_options["reports_dir"] = paths.reports
+            if args.journal_metrics != "legacy":
+                path_options["journal_metrics"] = args.journal_metrics
             run_watch(base_dir, settings, storage, rss=args.rss, report=args.report,
                       top=args.top, push=args.push, **path_options)
     finally:
@@ -91,6 +96,7 @@ def run_watch(
     push: bool,
     state_dir: Path | None = None,
     reports_dir: Path | None = None,
+    journal_metrics: str = "legacy",
 ) -> None:
     ingest = ZoteroIngestor(storage, settings)
     ingest.run(full=False)
@@ -103,7 +109,11 @@ def run_watch(
     dedupe = DedupeEngine(storage)
     filtered = dedupe.filter(candidates)
 
-    ranker = WorkRanker(base_dir, settings, **path_options)
+    with journal_metrics_path(journal_metrics, base_dir) as metrics_path:
+        ranker_options = dict(path_options)
+        if metrics_path is not None:
+            ranker_options["metrics_path"] = metrics_path
+        ranker = WorkRanker(base_dir, settings, **ranker_options)
     ranked = ranker.rank(filtered)
 
     ranked = _filter_recent(ranked, days=7)

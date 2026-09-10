@@ -30,5 +30,8 @@ Repository = "https://github.com/Yorks0n/ZotWatch"
 zotwatch = "zotwatch.cli:main"
 
 [tool.setuptools]
-packages = ["src", "zotwatch"]
+packages = ["src", "zotwatch", "zotwatch.resources"]
 include-package-data = false
+
+[tool.setuptools.package-data]
+"zotwatch.resources" = ["journal_metrics.csv"]
