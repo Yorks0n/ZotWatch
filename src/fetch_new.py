@@ -23,14 +23,15 @@ ARXIV_MAX_RESULTS = 50
 
 
 class CandidateFetcher:
-    def __init__(self, settings: Settings, base_dir: Path):
+    def __init__(self, settings: Settings, base_dir: Path, *, state_dir: Path | None = None):
         self.settings = settings
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "ZotWatcher/0.1 (https://github.com/Yorks0n/ZotWatch)"})
         self.base_dir = Path(base_dir)
-        self.cache_path = self.base_dir / "data" / "cache" / "candidate_cache.json"
+        self.state_dir = Path(state_dir) if state_dir is not None else self.base_dir / "data"
+        self.cache_path = self.state_dir / "cache" / "candidate_cache.json"
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.profile_path = self.base_dir / "data" / "profile.json"
+        self.profile_path = self.state_dir / "profile.json"
         self.top_venues = self._load_top_venues()
 
     def fetch_all(self) -> List[CandidateWork]:

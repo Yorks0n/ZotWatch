@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
+from zotwatch.paths import RuntimePaths
 
 from .build_profile import ProfileBuilder
 from .dedupe import DedupeEngine
@@ -20,16 +21,13 @@ from .settings import Settings, load_settings
 from .storage import ProfileStorage
 from .report_html import render_html
 
-load_dotenv()  # Load default .env if present
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_SQLITE = BASE_DIR / "data" / "profile.sqlite"
-RSS_PATH = BASE_DIR / "reports" / "feed.xml"
-
-
 def main(argv: Optional[list[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="ZotWatcher CLI")
     parser.add_argument("command", choices=["profile", "watch"], help="Command to run")
-    parser.add_argument("--base-dir", default=str(BASE_DIR), help="Repository base directory")
+    parser.add_argument("--workspace", help="Personal workspace (default: current directory)")
+    parser.add_argument("--base-dir", help="Compatibility alias for --workspace")
+    parser.add_argument("--state-dir", help="State directory (default: workspace/data)")
+    parser.add_argument("--reports-dir", help="Reports directory (default: workspace/reports)")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument("--full", action="store_true", help="Full rebuild (profile command)")
     parser.add_argument("--weekly", action="store_true", help="Alias for --full in profile command")
@@ -41,24 +39,38 @@ def main(argv: Optional[list[str]] = None) -> None:
     args = parser.parse_args(argv)
 
     setup_logging(verbose=args.verbose)
-    base_dir = Path(args.base_dir)
+    try:
+        paths = RuntimePaths.resolve(workspace=args.workspace, base_dir=args.base_dir,
+                                     state_dir=args.state_dir, reports_dir=args.reports_dir)
+    except ValueError as exc:
+        parser.error(str(exc))
+    base_dir = paths.workspace
     load_dotenv(base_dir / ".env")
     settings = load_settings(base_dir)
-    storage = ProfileStorage(base_dir / "data" / "profile.sqlite")
+    storage = ProfileStorage(paths.state / "profile.sqlite")
+    # Default calls keep the legacy API; overrides are explicit keyword arguments.
+    path_options = {"state_dir": paths.state} if args.state_dir is not None else {}
+    try:
+        if args.command == "profile":
+            run_profile(base_dir, settings, storage, full=args.full or args.weekly, **path_options)
+        elif args.command == "watch":
+            if args.reports_dir is not None:
+                path_options["reports_dir"] = paths.reports
+            run_watch(base_dir, settings, storage, rss=args.rss, report=args.report,
+                      top=args.top, push=args.push, **path_options)
+    finally:
+        storage.close()
 
-    if args.command == "profile":
-        run_profile(base_dir, settings, storage, full=args.full or args.weekly)
-    elif args.command == "watch":
-        run_watch(base_dir, settings, storage, rss=args.rss, report=args.report, top=args.top, push=args.push)
 
-
-def run_profile(base_dir: Path, settings: Settings, storage: ProfileStorage, *, full: bool) -> None:
+def run_profile(base_dir: Path, settings: Settings, storage: ProfileStorage, *, full: bool,
+                state_dir: Path | None = None) -> None:
     ingest = ZoteroIngestor(storage, settings)
     stats = ingest.run(full=full)
     logging.getLogger(__name__).info(
         "Ingest stats: fetched=%s updated=%s removed=%s", stats.fetched, stats.updated, stats.removed
     )
-    builder = ProfileBuilder(base_dir, storage, settings)
+    path_options = {"state_dir": state_dir} if state_dir is not None else {}
+    builder = ProfileBuilder(base_dir, storage, settings, **path_options)
     artifacts = builder.run()
     logging.getLogger(__name__).info(
         "Profile artifacts generated: sqlite=%s faiss=%s json=%s",
@@ -77,17 +89,21 @@ def run_watch(
     report: bool,
     top: int,
     push: bool,
+    state_dir: Path | None = None,
+    reports_dir: Path | None = None,
 ) -> None:
     ingest = ZoteroIngestor(storage, settings)
     ingest.run(full=False)
 
-    fetcher = CandidateFetcher(settings, base_dir)
+    path_options = {"state_dir": state_dir} if state_dir is not None else {}
+    output_dir = Path(reports_dir) if reports_dir is not None else base_dir / "reports"
+    fetcher = CandidateFetcher(settings, base_dir, **path_options)
     candidates = fetcher.fetch_all()
 
     dedupe = DedupeEngine(storage)
     filtered = dedupe.filter(candidates)
 
-    ranker = WorkRanker(base_dir, settings)
+    ranker = WorkRanker(base_dir, settings, **path_options)
     ranked = ranker.rank(filtered)
 
     ranked = _filter_recent(ranked, days=7)
@@ -99,20 +115,20 @@ def run_watch(
     if not ranked:
         logging.getLogger(__name__).info("No ranked results available")
         if rss:
-            write_rss([], base_dir / "reports" / "feed.xml")
+            write_rss([], output_dir / "feed.xml")
         if report:
-            render_html([], base_dir / "reports" / "report-empty.html")
+            render_html([], output_dir / "report-empty.html")
         return
 
     _log_top_results(ranked)
 
     if rss:
-        write_rss(ranked, base_dir / "reports" / "feed.xml")
+        write_rss(ranked, output_dir / "feed.xml")
     if report:
         report_name = "report.html"
         if ranked[0].published:
             report_name = f"report-{ranked[0].published:%Y%m%d}.html"
-        render_html(ranked, base_dir / "reports" / report_name)
+        render_html(ranked, output_dir / report_name)
     if push:
         ZoteroPusher(settings).push(ranked)
 

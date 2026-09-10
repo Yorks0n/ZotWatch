@@ -25,13 +25,15 @@ class RankerArtifacts:
 
 
 class WorkRanker:
-    def __init__(self, base_dir: Path | str, settings: Settings, vectorizer: TextVectorizer | None = None):
+    def __init__(self, base_dir: Path | str, settings: Settings, vectorizer: TextVectorizer | None = None,
+                 *, state_dir: Path | None = None):
         self.base_dir = Path(base_dir)
         self.settings = settings
         self.vectorizer = vectorizer or TextVectorizer()
+        self.state_dir = Path(state_dir) if state_dir is not None else self.base_dir / "data"
         self.artifacts = RankerArtifacts(
-            index_path=self.base_dir / "data" / "faiss.index",
-            profile_path=self.base_dir / "data" / "profile.json",
+            index_path=self.state_dir / "faiss.index",
+            profile_path=self.state_dir / "profile.json",
         )
         self.index = FaissIndex.load(self.artifacts.index_path)
         self.profile = self._load_profile()
