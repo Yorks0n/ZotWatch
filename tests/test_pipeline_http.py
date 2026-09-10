@@ -17,7 +17,7 @@ def test_cli_profile_then_watch_real_pipeline(workspace, settings, candidates, m
     rows = read_json(FIXTURES / "zotero.json")
     replies = iter([Response(rows, headers={"Last-Modified-Version": "10"}),
                     Response([{"data": {"key": "NEW", "version": 20, "title": "New library science"}}], headers={"Last-Modified-Version": "20"}),
-                    Response({"items": []})])
+                    Response({"items": []}, headers={"Last-Modified-Version": "20"})])
     monkeypatch.setattr(ingest_zotero_api, "request_with_retry", lambda *a, **kw: next(replies))
     monkeypatch.setattr(build_profile, "TextVectorizer", FixedVectors)
     monkeypatch.setattr(score_rank, "TextVectorizer", FixedVectors)

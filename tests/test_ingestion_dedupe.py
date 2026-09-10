@@ -1,6 +1,3 @@
-from copy import deepcopy
-from dataclasses import asdict
-
 import pytest
 import requests
 
@@ -21,44 +18,41 @@ def test_client_paging_and_304(settings, monkeypatch):
     client = ingest.ZoteroClient(settings)
     assert len(list(client.iter_items(10))) == 2
     assert calls[0][2]["headers"] == {"If-Modified-Since-Version": "10"}
-    assert calls[0][2]["params"] == {"limit": 100, "sort": "dateAdded", "direction": "asc"}
+    assert calls[0][2]["params"] == {
+        "limit": 100,
+        "sort": "dateAdded",
+        "direction": "asc",
+        "includeTrashed": 1,
+        "since": 10,
+    }
     assert calls[1][2]["params"] is None
     assert calls[1][2]["headers"] == {}
     monkeypatch.setattr(ingest, "request_with_retry", lambda *a, **kw: Response(status=304))
     assert list(client.iter_items(10)) == []
 
 
-@pytest.mark.parametrize("partial", [False, True])
-def test_bug_ingest_deletion_watermark_and_partial_progress(library, settings, monkeypatch, partial):
-    # BUG-I1/I2: deletion query uses new watermark, even after page failure.
+def test_bug_content_update_still_preserves_embedding(library, settings, monkeypatch):
+    # BUG-I4 remains outside E3: source changes do not invalidate embeddings.
     library.set_last_modified_version(10)
     library.set_embedding("LIB1", b"old-embedding")
     rows = read_json(FIXTURES / "zotero.json")
+    rows[0]["version"] = 20
     rows[0]["data"].update(version=20, title="Updated genome")
-    new = deepcopy(rows[1])
-    new["data"].update(key="LIB3", version=20, title="New synthetic work")
-    calls = []
-    def request(session, method, url, **kwargs):
-        calls.append((url, kwargs))
-        if url.endswith("/deleted"):
-            return Response({"items": ["LIB2"]})
-        if "start=" in url:
-            if partial:
-                raise requests.ConnectionError("synthetic page failure")
-            return Response([new], headers={"Last-Modified-Version": "20"})
-        return Response([rows[0]], headers={"Last-Modified-Version": "20", "Link": '<https://api.zotero.org/users/123456/items?start=100>; rel="next"'})
+    replies = iter([
+        Response([rows[0]], headers={"Last-Modified-Version": "20"}),
+        Response({"items": []}, headers={"Last-Modified-Version": "20"}),
+    ])
+    def request(*args, **kwargs):
+        return next(replies)
     monkeypatch.setattr(ingest, "request_with_retry", request)
     stats = ingest.ZoteroIngestor(library, settings).run()
-    assert asdict(stats) == dict(fetched=1 if partial else 2, updated=1 if partial else 2, removed=1, last_modified_version=20)
-    assert calls[-1][1]["params"] == {"since": 20}
+    assert (stats.fetched, stats.updated, stats.removed) == (1, 1, 0)
     assert library.last_modified_version() == 20
-    assert [item.key for item in library.iter_items()] == (["LIB1"] if partial else ["LIB1", "LIB3"])
     assert next(library.iter_items()).title == "Updated genome"
-    # BUG-I4: changing content does not invalidate its stored embedding.
     assert library.fetch_all_embeddings() == [("LIB1", b"old-embedding")]
 
 
-def test_bug_full_sync_retains_absent_rows(library, settings, monkeypatch):
+def test_e3_full_sync_removes_absent_rows(library, settings, monkeypatch):
     library.set_last_modified_version(10)
     rows = read_json(FIXTURES / "zotero.json")
     calls = []
@@ -69,11 +63,11 @@ def test_bug_full_sync_retains_absent_rows(library, settings, monkeypatch):
     stats = ingest.ZoteroIngestor(library, settings).run(full=True)
     assert len(calls) == 1  # Full does not request tombstones.
     assert calls[0]["headers"] == {}
-    assert stats.removed == 0
-    assert [item.key for item in library.iter_items()] == ["LIB1", "LIB2"]
+    assert stats.removed == stats.applied_removed == 1
+    assert [item.key for item in library.iter_items()] == ["LIB1"]
 
 
-def test_304_still_fetches_deletions(library, settings, monkeypatch):
+def test_304_is_successful_noop_without_deleted_request(library, settings, monkeypatch):
     library.set_last_modified_version(10)
     calls = []
     def request(session, method, url, **kw):
@@ -81,20 +75,22 @@ def test_304_still_fetches_deletions(library, settings, monkeypatch):
         return Response({"items": ["LIB2"]}) if url.endswith("/deleted") else Response(status=304)
     monkeypatch.setattr(ingest, "request_with_retry", request)
     stats = ingest.ZoteroIngestor(library, settings).run()
-    assert asdict(stats) == dict(fetched=0, updated=0, removed=1, last_modified_version=None)
-    assert calls[-1][1]["params"] == {"since": 10}
+    assert (stats.fetched, stats.updated, stats.removed) == (0, 0, 0)
+    assert stats.last_modified_version == stats.committed_revision == 10
+    assert len(calls) == 1
     assert library.last_modified_version() == 10
 
 
 def test_total_network_failure_keeps_existing_state(library, settings, monkeypatch):
     library.set_last_modified_version(10)
+    before = [item.model_dump() for item in library.iter_items()]
     def fail(*a, **kw):
         raise requests.Timeout("synthetic timeout")
     monkeypatch.setattr(ingest, "request_with_retry", fail)
-    stats = ingest.ZoteroIngestor(library, settings).run()
-    assert asdict(stats) == dict(fetched=0, updated=0, removed=0, last_modified_version=None)
+    with pytest.raises(ingest.ZoteroSyncError):
+        ingest.ZoteroIngestor(library, settings).run()
     assert library.last_modified_version() == 10
-    assert len(list(library.iter_items())) == 2
+    assert [item.model_dump() for item in library.iter_items()] == before
 
 
 def test_item_mapping_and_unchanged_upsert_count(library, settings, monkeypatch):

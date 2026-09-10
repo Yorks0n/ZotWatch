@@ -1,6 +1,6 @@
 # E3 Implementation Plan — Zotero Sync Correctness
 
-Status: **plan only; awaiting review**  
+Status: **approved; implementation follows this reviewed boundary**
 Branch: `codex/v2-e3`  
 Starting baseline: `2c276da8696618fcd4acd4b34eaf8b1b900219a4` (`v2-e2-baseline`)  
 Scope: ZotWatch repository only. This document does not modify production behavior.

@@ -14,6 +14,7 @@ import requests
 
 from src import ingest_zotero_api as ingest
 from src.models import ZoteroItem
+from src.utils import hash_content
 from .helpers import FIXTURES, Response, read_json
 
 
@@ -293,6 +294,22 @@ def test_middle_page_failure_leaves_rows_and_watermark_unchanged(library, settin
     assert mirror_state(library) == before
 
 
+def test_full_middle_page_failure_does_not_replace_existing_mirror(library, settings, monkeypatch):
+    library.set_last_modified_version(10)
+    before = mirror_state(library)
+    next_url = "https://api.zotero.org/users/123456/items?start=100"
+    script = ScriptedRequests(
+        response([remote_item("FIRST", 20, "First page")], 20, link=next_url),
+        requests.ConnectionError("synthetic full middle-page failure"),
+    )
+    monkeypatch.setattr(ingest, "request_with_retry", script)
+
+    with pytest.raises(ingest.ZoteroSyncError):
+        ingest.ZoteroIngestor(library, settings).run(full=True)
+
+    assert mirror_state(library) == before
+
+
 def test_deleted_endpoint_failure_leaves_rows_and_watermark_unchanged(library, settings, monkeypatch):
     library.set_last_modified_version(10)
     before = mirror_state(library)
@@ -368,6 +385,29 @@ def test_remote_revision_change_discards_attempt_and_restarts(library, settings,
     assert all(call[2]["params"]["since"] == 10 for call in first_item_calls)
     assert keys(library) == ["LIB1", "LIB3", "LIB4"]
     assert_success_revisions(stats, 10, 22)
+
+
+def test_repeated_remote_revision_drift_exhausts_bound_and_keeps_state(library, settings, monkeypatch):
+    library.set_last_modified_version(10)
+    before = mirror_state(library)
+    next_url = "https://api.zotero.org/users/123456/items?start=100"
+    script = ScriptedRequests(
+        response([remote_item("A", 20, "A")], 20, link=next_url),
+        response([remote_item("B", 21, "B")], 21),
+        response([remote_item("A", 22, "A")], 22, link=next_url),
+        response([remote_item("B", 23, "B")], 23),
+        response([remote_item("A", 24, "A")], 24, link=next_url),
+        response([remote_item("B", 25, "B")], 25),
+    )
+    monkeypatch.setattr(ingest, "request_with_retry", script)
+
+    with pytest.raises(ingest.ZoteroRevisionChanged):
+        ingest.ZoteroIngestor(library, settings).run()
+
+    base_calls = [call for call in script.calls if call[1].endswith("/items")]
+    assert len(base_calls) == ingest.REVISION_RESTART_ATTEMPTS == 3
+    assert all(call[2]["params"]["since"] == 10 for call in base_calls)
+    assert mirror_state(library) == before
 
 
 @pytest.mark.parametrize(
@@ -478,4 +518,25 @@ def test_unknown_tombstone_preserves_legacy_removed_but_applied_count_is_zero(st
 
     assert stats.removed == 1
     assert stats.applied_removed == 0
+    assert_success_revisions(stats, 10, 20)
+
+
+def test_unchanged_replay_counts_legacy_updated_without_actual_change(storage, settings, monkeypatch):
+    unchanged = remote_item("UNCHANGED", 10, "Same")
+    item = ZoteroItem.from_zotero_api(unchanged)
+    content_hash = hash_content(
+        item.title,
+        item.abstract or "",
+        ",".join(item.creators),
+        ",".join(item.tags),
+    )
+    storage.upsert_item(item, content_hash=content_hash)
+    storage.set_last_modified_version(10)
+    script = ScriptedRequests(response([unchanged], 20), response({"items": []}, 20))
+    monkeypatch.setattr(ingest, "request_with_retry", script)
+
+    stats = ingest.ZoteroIngestor(storage, settings).run()
+
+    assert stats.updated == 1
+    assert (stats.applied_inserted, stats.applied_changed, stats.applied_removed) == (0, 0, 0)
     assert_success_revisions(stats, 10, 20)
