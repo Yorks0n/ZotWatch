@@ -43,6 +43,7 @@ E3 assigns stable regression identifiers to each intentional behavior change.
 | E3-SYNC-006 | A response lacks a valid `Last-Modified-Version`, has an invalid payload, or contains an invalid record | Missing revision can be interpreted as `0`; partial earlier records may already be committed | Treat the attempt as incomplete and leave SQLite unchanged |
 | E3-SYNC-007 | Incremental mode has a committed watermark | Conditional request is used, but no `since=R0` item query is sent | Request the delta since `R0`, while retaining the first-request no-op conditional |
 | E3-SYNC-008 | A page or item is replayed | It is counted and upserted repeatedly | Stage by item key; replay is idempotent and cannot regress the final object |
+| E3-SYNC-009 | An item moves to trash or is restored | Default `/items` excludes trash, so a trash transition can leave a stale local row while the watermark advances | Use `includeTrashed=1` as the transport domain and project `data.deleted` into the non-trash local mirror domain |
 
 Existing E0 observation labels map as follows: BUG-I1 → E3-SYNC-002, BUG-I2 → E3-SYNC-001/004, and BUG-I3 → E3-SYNC-003. BUG-I4, stale embedding retention after content change, belongs to computational state work and remains outside E3. The E3 release note will identify the changed cases instead of rewriting unrelated characterization output.
 
@@ -99,6 +100,14 @@ Network access never occurs inside the SQLite transaction. A run does not call t
 
 `IngestStats` will expose these distinctions using optional `start_revision`, `target_revision`, `observed_revision`, and `committed_revision` fields. The existing `last_modified_version` field remains as a compatibility alias/value for the successful committed revision. It is never populated with an uncommitted observation.
 
+The legacy counter fields retain their observable meaning wherever it already exists:
+
+- `fetched` counts valid item records observed from the transport, including replayed pages and, after E3, explicit trash-state records;
+- `updated` counts valid non-trashed item records accepted for local upsert, including unchanged and replayed records, so historical no-trash runs continue to report one `updated` per fetched item;
+- `removed` counts unique removal intents produced by permanent tombstones, trash transitions, and full-snapshot stale-key reconciliation.
+
+Atomic apply also returns new `applied_inserted`, `applied_changed`, and `applied_removed` counters for actual SQLite row mutations. A replay or unchanged item can therefore increment legacy `updated` while leaving `applied_changed` at zero. An unknown tombstone can increment legacy `removed` while leaving `applied_removed` at zero. These semantics will have dedicated regressions and release-note documentation; E3 does not silently redefine `updated` to mean actual changed rows.
+
 ### 4.2 Stable response requirement
 
 Every 200 item page and the incremental deleted response must contain a parseable non-negative `Last-Modified-Version`. All values in one attempt must equal `R_target`. A higher or lower value means the library changed or the response set is inconsistent; the attempt is discarded.
@@ -111,42 +120,62 @@ The first incremental item request sends both the delta query `since=R_start` an
 
 ## 5. Full and incremental semantics
 
-### 5.1 Initial and explicit full sync
+### 5.1 Transport domain and local mirror domain
+
+Zotero's official API documentation states that `/items` excludes trashed items by default, while the official sync sequence requests item changes with `includeTrashed=1`. Zotero Data Server API v3 serializes a trashed item directly as `data.deleted: 1`; after restore the `deleted` property is absent. E3 uses this field only: present `1`/`true` means trashed, absence means active, and any other present value is malformed. It does not infer trash from title, item type, endpoint source, or missing membership.
+
+References used to fix the contract:
+
+- [Zotero Web API v3 syncing sequence](https://www.zotero.org/support/dev/web_api/v3/syncing)
+- [Zotero Web API item endpoint and `includeTrashed` semantics](https://www.zotero.org/support/dev/web_api/v3/basics)
+- [Official Data Server API v3 include-trash and restore tests](https://github.com/zotero/dataserver/blob/476ed12c18cbd431170346702882d091710f5f61/tests/remote/tests/3/item.test.js#L2089-L2215)
+
+This creates two explicit domains:
+
+- **Synchronization transport domain:** both full and incremental `/items` requests use `includeTrashed=1`, so trash and restore are observable versioned item changes.
+- **ZotWatch local mirror domain:** only active items are stored and used by profile building. Trashed items are staged as removal intents, never projected into the local item table.
+
+In an incremental delta, `data.deleted: 1` removes the local row and an active response for a previously trashed key restores it by normal upsert. In a full snapshot, only active remote keys form the authoritative mirror set; trashed remote keys are excluded, so full and incremental runs converge on the same local domain.
+
+### 5.2 Initial and explicit full sync
 
 If no watermark exists, incremental invocation is promoted to a full snapshot. Explicit `--full` also uses snapshot mode, regardless of an existing watermark.
 
 Snapshot mode:
 
-1. Fetches all pages for the current `/items` query scope without a conditional watermark.
+1. Fetches all pages with `includeTrashed=1` and without a conditional watermark.
 2. Requires one stable target revision across all pages, including an empty result.
 3. Parses the entire response set before touching SQLite.
-4. In one transaction, upserts all remote items, removes every local item key absent from the remote snapshot, and writes `R_target`.
+4. Partitions active and trashed items using `data.deleted`.
+5. In one transaction, upserts active remote items, removes every local item key absent from the active remote snapshot, and writes `R_target`.
 
-The full-snapshot domain remains the existing ZotWatch `/items` endpoint/query scope; E3 will not introduce new Zotero item-type, collection, trash, or write-back policy. Full sync does not need `/deleted`: set reconciliation already determines the final mirror and avoids making completeness depend on historical tombstone retention.
+The product-visible full-snapshot domain remains the existing non-trash ZotWatch `/items` domain. `includeTrashed=1` expands only the synchronization transport so trash state is explicit; it does not add trashed records to SQLite/profile. E3 will not introduce new item-type, collection, or write-back policy. Full sync does not need `/deleted`: active-set reconciliation already determines the final mirror and avoids making completeness depend on historical tombstone retention.
 
 An empty remote snapshot is valid only after a successful response carrying a valid target revision. It removes all local item rows inside the final transaction. A network failure before that point cannot empty the local database.
 
-### 5.2 Incremental sync
+### 5.3 Incremental sync
 
 With committed `R_start`, incremental mode:
 
-1. Fetches item changes with `since=R_start` and a first-request conditional header.
+1. Fetches item changes with `since=R_start`, `includeTrashed=1`, and a first-request conditional header.
 2. Follows pagination links while validating every response against `R_target`.
 3. Fetches `/deleted?since=R_start`, never `R_target` or a page maximum.
 4. Requires the deleted response revision to match `R_target`.
-5. Atomically applies upserts, then tombstones, then `last_modified_version=R_target`.
+5. Partitions active item upserts from `data.deleted` trash removals.
+6. Atomically applies active upserts, then trash/permanent-delete removals, then `last_modified_version=R_target`.
 
 If a key appears in both changed items and tombstones for the same stable revision, deletion wins because it describes the final absence. Deleting an already absent key is a no-op.
 
 ## 6. Acquisition and validation boundary
 
-Remote data is staged in memory as a mapping keyed by Zotero item key plus a set of deleted keys. This is the smallest design that prevents partial commits without keeping a write transaction open during network operations. A staging table is not planned for E3 because it would add schema lifecycle and recovery states without improving the single-process correctness boundary. If real library sizes later make memory use unacceptable, a durable or temporary staging design can replace the collector behind the same commit contract.
+Remote data is staged in memory as a mapping keyed by Zotero item key, including its explicit active/trashed state, plus a set of permanent-deletion tombstones. This is the smallest design that prevents partial commits without keeping a write transaction open during network operations. A staging table is not planned for E3 because it would add schema lifecycle and recovery states without improving the single-process correctness boundary. If real library sizes later make memory use unacceptable, a durable or temporary staging design can replace the collector behind the same commit contract.
 
 Validation occurs before SQLite mutation:
 
 - response bodies have the expected list/object shape;
 - revision headers are present, numeric, non-negative, and stable;
 - every item has a non-empty string key and valid non-negative item version before `ZoteroItem` projection;
+- `data.deleted` is absent for active items or the documented `1`/`true` value for trashed items; another present value fails validation;
 - tombstones are non-empty string keys;
 - pagination next links cannot form a URL cycle;
 - duplicate/replayed items with the same key select the highest item version;
@@ -164,8 +193,8 @@ The staged data contains normalized `ZoteroItem` objects and precomputed content
 The operation will:
 
 1. Start `BEGIN IMMEDIATE` only after all remote reads and validation succeed.
-2. Upsert staged items with the existing item-field projection and content hash behavior.
-3. For incremental mode, remove staged tombstone keys in bounded batches.
+2. Upsert staged active items with the existing item-field projection and content hash behavior.
+3. For incremental mode, remove staged trash-transition and permanent-tombstone keys in bounded batches.
 4. For full mode, read current local keys inside the transaction, compute stale keys against the staged remote set, and remove them in bounded batches.
 5. Write `metadata.last_modified_version = R_target` using the same connection and transaction.
 6. Commit once. Any exception rolls back item rows, deletions, and metadata together.
@@ -240,6 +269,9 @@ All HTTP tests use synthetic responses and real temporary SQLite databases. No t
 | One added item | Delta since `R_start` | New row and `R_target` committed together | core incremental |
 | One modified item | Existing key with newer item version | Source fields/hash updated; revision committed; embedding behavior unchanged | core incremental / BUG-I4 retained |
 | One deleted item | Tombstone after `R_start` | Deleted request uses `R_start`; row removed with `R_target` | E3-SYNC-002 |
+| Existing item moved to trash | Changed item has `data.deleted: 1` | Request uses `includeTrashed=1`; local row removed and `R_target` committed | E3-SYNC-009 |
+| Trashed item restored | Changed item no longer has `data.deleted` | Active item is upserted into the local mirror and `R_target` committed | E3-SYNC-009 |
+| Full sync with active and trashed items | Full transport includes both states | SQLite contains exactly the active set; result agrees with incremental transitions | E3-SYNC-003/009 |
 | Add + modify + delete | One stable revision | All three effects and watermark commit in one transaction; delete wins on key overlap | E3-SYNC-002 |
 | Multi-page sync | Two or more stable pages | Every next link fetched; one final SQLite transaction | core pagination |
 | Second/middle page failure | First page valid, later page exhausts retry | Exception; item rows and watermark byte/semantically unchanged | E3-SYNC-001 |
@@ -247,6 +279,7 @@ All HTTP tests use synthetic responses and real temporary SQLite databases. No t
 | Retry after failed sync | Repeat after page/deletion failure | Starts from original watermark and commits complete result exactly once | E3-SYNC-001/004 |
 | Full rebuild removes stale rows | Remote omits local key | Missing key removed only in successful final transaction | E3-SYNC-003 |
 | Duplicate/replayed page | Same item appears more than once | One final row, deterministic highest version, stable counts | E3-SYNC-008 |
+| Legacy vs applied stats | Unchanged/replayed item and unknown deletion | `updated` preserves per-record legacy count; new applied counters report actual row mutations | stats compatibility |
 | Pagination cycle | `next` repeats a visited URL | Visible failure, no SQLite change | E3-SYNC-006 |
 | Remote revision changes mid-sync | Later page or deleted response revision differs | Attempt discarded; fresh attempt succeeds, or bounded retry fails with no DB change | E3-SYNC-005 |
 | Malformed individual item | One valid and one bad record | Whole attempt fails; valid sibling is not partially committed | E3-SYNC-006 |
@@ -300,4 +333,3 @@ The E3 code path itself rolls back failed SQLite transactions automatically. No 
 ## 15. Explicit exclusions
 
 E3 will not implement profile incremental rebuild, embedding/FAISS invalidation or persistence, clustering, AI, recommendation/scoring changes, public candidate changes, reusable workflows, workspace-template changes, Cloudflare control-plane work, Zotero OAuth, Zotero write-back changes, or harvester changes.
-
