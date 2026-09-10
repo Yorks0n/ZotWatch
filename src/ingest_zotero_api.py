@@ -272,23 +272,21 @@ class ZoteroIngestor:
             stats.committed_revision = start_revision
             return stats
 
-        # This staged-but-non-atomic bridge is replaced by ProfileStorage's E3
-        # transaction in the following implementation commit.
         active_items = result.active_items
-        if result.full:
-            local_keys = {item.key for item in self.storage.iter_items()}
-            removal_keys = local_keys - set(active_items)
-        else:
-            removal_keys = result.trashed_keys | result.deleted_keys
+        removal_keys = result.trashed_keys | result.deleted_keys
+        apply_result = self.storage.apply_zotero_sync(
+            ((staged.item, staged.content_hash) for staged in active_items.values()),
+            removal_keys,
+            full=result.full,
+            revision=result.target_revision,
+        )
 
-        for staged in active_items.values():
-            self.storage.upsert_item(staged.item, content_hash=staged.content_hash)
-        self.storage.remove_items(removal_keys)
-        self.storage.set_last_modified_version(result.target_revision)
-
-        stats.removed = len(removal_keys)
+        stats.removed = apply_result.removed if result.full else len(removal_keys)
         stats.last_modified_version = result.target_revision
         stats.committed_revision = result.target_revision
+        stats.applied_inserted = apply_result.inserted
+        stats.applied_changed = apply_result.changed
+        stats.applied_removed = apply_result.removed
         return stats
 
     def _read_start_revision(self, *, full: bool) -> Optional[int]:
