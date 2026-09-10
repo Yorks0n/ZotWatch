@@ -1,9 +1,9 @@
-name: E1 packaging and paths
+name: E1 packaging and E2 config
 
 on:
   pull_request:
   push:
-    branches: [codex/v2, codex/v2-e1]
+    branches: [codex/v2, codex/v2-e1, codex/v2-e2]
   workflow_dispatch:
 
 permissions:
@@ -52,4 +52,4 @@ jobs:
           E1_DIST_DIR: ${{ runner.temp }}/e1-dist
         run: python -m pytest -c tests/pytest.ini -q
       - name: Verify immutable E0 inputs and expectations
-        run: git diff --exit-code v2-e0-baseline -- tests/goldens tests/fixtures
+        run: git diff --exit-code --diff-filter=DMR v2-e0-baseline -- tests/goldens tests/fixtures

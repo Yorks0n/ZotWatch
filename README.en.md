@@ -36,6 +36,20 @@ Relative state, report and CSV paths resolve against the workspace. `python -m s
 
 E1 preserves ranking, synchronization, caching and default SJR behavior. Explicitly selecting bundled metrics can change scores for a workspace that previously had no metrics. The original fork/Actions setup follows below.
 
+### E2 development: validate `zotwatch.yaml`
+
+E2 adds strict v2 configuration validation without connecting v2 configuration to recommendation execution yet. Validate an independent workspace offline with:
+
+```sh
+zotwatch config validate --workspace /path/to/personal-workspace
+```
+
+Ordinary `zotwatch.yaml` files contain no API keys, environment or GitHub Secret names, public Supabase keys, or engine references. AI defaults to disabled, so the minimum configuration is valid without any AI credential. Presets and the two defined Custom generation protocols can pass schema and semantic validation, but E2 has no network adapters. A valid configuration does not mean its AI features are executable, and a future standard UI must hide providers whose adapters are not implemented.
+
+Custom `connection_id` accepts only the engine-assigned `custom-1` through `custom-4`. The registry maps these IDs statically to four declared credential slots. The standard UI does not show the IDs, configuration cannot name a slot/environment/Secret, and a personal runner does not depend on a Cloudflare/D1 mapping. Validation output, reports, and artifacts do not contain Custom endpoints or keys.
+
+In E2, `zotwatch profile|watch` continues to execute only the three-file legacy configuration. A v2-only workspace returns `CONFIG_V2_EXECUTION_DEFERRED`. The `python -m src.cli` compatibility entry point and its 1.x behavior remain unchanged. The v2 boundary obtains the public candidate connection from an engine-owned package resource; legacy/self-hosted endpoint and key overrides remain confined to the legacy adapter.
+
 1. Sign in to GitHub and open the repository page: [ZotWatch](https://github.com/Yorks0n/ZotWatch)
 
 2. Click the **Fork** button at the top to create your own copy under your GitHub account: **Fork - Create fork**

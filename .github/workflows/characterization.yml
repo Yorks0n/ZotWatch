@@ -3,7 +3,7 @@ name: E0 characterization
 on:
   pull_request:
   push:
-    branches: [main, codex/dev, codex/v2, codex/v2-e0]
+    branches: [main, codex/dev, codex/v2, codex/v2-e0, codex/v2-e2]
   workflow_dispatch:
 
 permissions:

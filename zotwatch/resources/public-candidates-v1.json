@@ -1,0 +1,7 @@
+{
+  "provider": "public-api-v1",
+  "base_url": "https://rbsfoisrcaxacwodbuzg.supabase.co/functions/v1",
+  "publishable_key": "sb_publishable_-FMvey8-oTinBjTp5Ru4DA_L6QLFa9v",
+  "page_size": 200,
+  "timeout_seconds": 30
+}

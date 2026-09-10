@@ -38,6 +38,20 @@ zotwatch watch --workspace /path/to/personal-workspace --rss --report
 
 E1 不改变推荐算法、同步、缓存策略或默认 SJR 缺失行为。`--journal-metrics bundled` 是主动选用指标数据，可能使原本没有指标的 workspace 得到不同分数。原 1.x fork/Actions 使用方法继续如下。
 
+### E2 开发版：校验 `zotwatch.yaml`
+
+E2 增加严格的 v2 配置校验，但尚未把 v2 配置接入推荐执行。可在任意独立 workspace 离线验证：
+
+```sh
+zotwatch config validate --workspace /path/to/personal-workspace
+```
+
+普通 `zotwatch.yaml` 不含 API key、env/GitHub Secret 名、公共 Supabase key 或 engine ref。AI 默认关闭；没有任何 AI credential 的最小配置仍然合法。Preset 与两个明确的 Custom generation protocol 可通过 schema/语义校验，但 E2 没有网络 adapter；“配置合法”不表示 AI feature 当前可执行，普通 UI 也不应显示尚未实现的 provider。
+
+Custom 的 `connection_id` 仅允许 engine 分配的 `custom-1` 至 `custom-4`，并在 registry 内静态对应四个预声明 credential slots。普通 UI 不显示这些 ID，config 不能填写 slot/env/Secret 名，personal runner 也不依赖 Cloudflare/D1 mapping。Custom endpoint/key 不写入校验输出、报告或 artifact。
+
+E2 的 `zotwatch profile|watch` 仍只执行 legacy 三文件配置；v2-only workspace 会返回明确的 `CONFIG_V2_EXECUTION_DEFERRED`。兼容入口 `python -m src.cli` 及其 1.x 行为保持不变。公共候选池连接作为 engine-owned package resource 提供给 v2 配置边界，legacy/self-hosted endpoint/key override 继续只在旧 adapter 中生效。
+
 1. 登录GitHub后，打开仓库页面 [ZotWatch](https://github.com/Yorks0n/ZotWatch)
 
 2. 在顶部点击**Fork**按钮创建分支，将仓库复制到自己的GitHub账号下：**Fork - Create fork**
@@ -93,7 +107,7 @@ E1 不改变推荐算法、同步、缓存策略或默认 SJR 缺失行为。`--
    - `ZOTERO_API_KEY`：Zotero Web API 访问密钥
    - `ZOTERO_USER_ID`：Zotero 用户 ID（数字）
    可选：
-   - `SUPABASE_PUBLISHABLE_KEY`：覆盖仓库内置的统一公共候选池只读 key
+   - `SUPABASE_PUBLISHABLE_KEY`：仅供高级 legacy/self-hosted 配置覆盖公共候选池 key；普通 v2 用户不配置此 Secret
    - `ALTMETRIC_KEY`：用于获取 Altmetric 数据
    - `CROSSREF_MAILTO`：覆盖个人热门期刊补抓的联系邮箱
    - `OPENALEX_MAILTO`：仅在关闭统一公共候选池、回退直连 OpenAlex 时使用

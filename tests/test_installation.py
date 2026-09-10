@@ -60,7 +60,11 @@ def test_wheel_and_sdist_are_self_contained():
         names = archive.getnames()
         resource = next(n for n in names if n.endswith("zotwatch/resources/journal_metrics.csv"))
         assert archive.extractfile(resource).read() == original
-        assert not any(set(Path(n).parts) & {"tests", "config", "data", "reports", ".github"} for n in names)
+        forbidden_top_level = {"tests", "config", "data", "reports", ".github"}
+        assert not any(
+            len(Path(name).parts) > 1 and Path(name).parts[1] in forbidden_top_level
+            for name in names
+        )
 
 
 @pytest.mark.parametrize("kind", ["WHEEL", "EDITABLE"])

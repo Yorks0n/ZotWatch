@@ -1,0 +1,22 @@
+schema_version: 2
+zotero:
+  library_type: user
+candidates:
+  provider: public-api-v1
+  sources: [crossref, arxiv, biorxiv]
+  window_days: 7
+ranking:
+  policy: legacy-v1
+  top_n: 20
+  max_preprint_ratio: 0.3
+embedding:
+  provider: local
+  model: sentence-transformers/all-MiniLM-L6-v2
+ai:
+  services: {}
+  features:
+    rerank: {enabled: false}
+    summary: {enabled: false}
+outputs:
+  formats: [rss, html, json]
+  publish: false
