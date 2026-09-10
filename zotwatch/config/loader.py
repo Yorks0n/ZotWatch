@@ -9,6 +9,7 @@ import yaml
 from .errors import ConfigError
 from .models import ZotWatchConfigV2
 from .schema import validate_schema_document
+from .semantic import resolve_feature_routes
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -56,12 +57,14 @@ def load_v2_config(path: Path | str) -> ZotWatchConfigV2:
     data = _read_yaml(Path(path))
     validate_schema_document(data)
     try:
-        return ZotWatchConfigV2.model_validate(data)
+        config = ZotWatchConfigV2.model_validate(data)
     except ValidationError as exc:
         error = exc.errors(include_input=False, include_url=False)[0]
         pointer = "/" + "/".join(str(part) for part in error.get("loc", ()))
         raise ConfigError("CONFIG_SCHEMA", "configuration failed typed validation",
                           json_pointer=pointer) from exc
+    resolve_feature_routes(config)
+    return config
 
 
 def load_v2_workspace(workspace: Path | str) -> ZotWatchConfigV2:

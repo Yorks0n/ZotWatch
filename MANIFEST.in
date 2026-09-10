@@ -1,6 +1,6 @@
 include LICENSE README.md pyproject.toml
 recursive-include src *.py
-recursive-include zotwatch *.py *.csv
+recursive-include zotwatch *.py *.csv *.json
 prune tests
 prune config
 prune data

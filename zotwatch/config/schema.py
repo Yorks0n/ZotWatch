@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from importlib.resources import files
+import json
 from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
+
+from zotwatch.providers import custom_connection_ids, preset_provider_ids, protocol_ids
 
 from .errors import ConfigError
 from .models import ZotWatchConfigV2
@@ -12,6 +16,19 @@ from .models import ZotWatchConfigV2
 @lru_cache(maxsize=1)
 def build_config_schema() -> dict[str, Any]:
     schema = ZotWatchConfigV2.model_json_schema(mode="validation")
+    preset_provider = schema["$defs"]["PresetServiceConfig"]["properties"]["provider"]
+    preset_provider.pop("minLength", None)
+    preset_provider.pop("maxLength", None)
+    preset_provider["enum"] = list(preset_provider_ids())
+    custom_properties = schema["$defs"]["CustomServiceConfig"]["properties"]
+    custom_properties["protocol"].pop("minLength", None)
+    custom_properties["protocol"].pop("maxLength", None)
+    custom_properties["protocol"]["enum"] = list(protocol_ids())
+    custom_properties["connection_id"] = {
+        "enum": list(custom_connection_ids()),
+        "title": "Connection Id",
+        "type": "string",
+    }
     schema.update(
         {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -23,8 +40,16 @@ def build_config_schema() -> dict[str, Any]:
     return schema
 
 
+@lru_cache(maxsize=1)
+def load_published_schema() -> dict[str, Any]:
+    resource = files("zotwatch.resources").joinpath("config-v2.schema.json")
+    schema = json.loads(resource.read_text(encoding="utf-8"))
+    Draft202012Validator.check_schema(schema)
+    return schema
+
+
 def validate_schema_document(data: Any) -> None:
-    validator = Draft202012Validator(build_config_schema(), format_checker=FormatChecker())
+    validator = Draft202012Validator(load_published_schema(), format_checker=FormatChecker())
     errors = sorted(
         validator.iter_errors(data),
         key=lambda error: tuple(str(part) for part in error.absolute_path),
@@ -38,4 +63,4 @@ def validate_schema_document(data: Any) -> None:
     raise ConfigError("CONFIG_SCHEMA", detail, json_pointer=pointer)
 
 
-__all__ = ["build_config_schema", "validate_schema_document"]
+__all__ = ["build_config_schema", "load_published_schema", "validate_schema_document"]

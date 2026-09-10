@@ -10,7 +10,7 @@ ModelIdentifier = Annotated[
     str,
     StringConstraints(min_length=1, max_length=256, pattern=r"^\S(?:.*\S)?$"),
 ]
-CustomConnectionId = Literal["custom-1", "custom-2", "custom-3", "custom-4"]
+CustomConnectionId = str
 
 
 class StrictConfigModel(BaseModel):
