@@ -25,3 +25,8 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Python build outputs
+/build/
+/dist/
+/*.egg-info/

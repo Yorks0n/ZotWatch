@@ -24,15 +24,18 @@ class ProfileBuilder:
         storage: ProfileStorage,
         settings: Settings,
         vectorizer: TextVectorizer | None = None,
+        *,
+        state_dir: Path | None = None,
     ):
         self.base_dir = Path(base_dir)
         self.storage = storage
         self.settings = settings
         self.vectorizer = vectorizer or TextVectorizer()
+        self.state_dir = Path(state_dir) if state_dir is not None else self.base_dir / "data"
         self.artifacts = ProfileArtifacts(
-            sqlite_path=str(self.base_dir / "data" / "profile.sqlite"),
-            faiss_path=str(self.base_dir / "data" / "faiss.index"),
-            profile_json_path=str(self.base_dir / "data" / "profile.json"),
+            sqlite_path=str(storage.path),
+            faiss_path=str(self.state_dir / "faiss.index"),
+            profile_json_path=str(self.state_dir / "profile.json"),
         )
 
     def run(self) -> ProfileArtifacts:
@@ -48,6 +51,7 @@ class ProfileBuilder:
             self.storage.set_embedding(item.key, vector.tobytes())
 
         logger.info("Building FAISS index")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
         index, order = FaissIndex.from_vectors(vectors)
         index.save(self.artifacts.faiss_path)
 

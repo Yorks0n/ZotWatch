@@ -25,13 +25,16 @@ class RankerArtifacts:
 
 
 class WorkRanker:
-    def __init__(self, base_dir: Path | str, settings: Settings, vectorizer: TextVectorizer | None = None):
+    def __init__(self, base_dir: Path | str, settings: Settings, vectorizer: TextVectorizer | None = None,
+                 *, state_dir: Path | None = None, metrics_path: Path | None = None):
         self.base_dir = Path(base_dir)
         self.settings = settings
         self.vectorizer = vectorizer or TextVectorizer()
+        self.state_dir = Path(state_dir) if state_dir is not None else self.base_dir / "data"
+        self.metrics_path = Path(metrics_path) if metrics_path is not None else self.base_dir / "data" / "journal_metrics.csv"
         self.artifacts = RankerArtifacts(
-            index_path=self.base_dir / "data" / "faiss.index",
-            profile_path=self.base_dir / "data" / "profile.json",
+            index_path=self.state_dir / "faiss.index",
+            profile_path=self.state_dir / "profile.json",
         )
         self.index = FaissIndex.load(self.artifacts.index_path)
         self.profile = self._load_profile()
@@ -44,7 +47,7 @@ class WorkRanker:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def _load_journal_metrics(self) -> Dict[str, float]:
-        path = self.base_dir / "data" / "journal_metrics.csv"
+        path = self.metrics_path
         metrics: Dict[str, float] = {}
         if not path.exists():
             logger.warning("Journal metrics file not found: %s", path)

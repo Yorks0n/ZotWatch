@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools==77.0.3", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ZotWatch"
+version = "2.0.0.dev1"
+description = "Personalized literature recommendations from a Zotero library"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = [
+  "requests>=2.31",
+  "pydantic>=2.6",
+  "PyYAML>=6.0.1",
+  "rapidfuzz>=3.5",
+  "jinja2>=3.1",
+  "feedparser>=6.0",
+  "sentence-transformers>=2.2",
+  "faiss-cpu>=1.7",
+  "numpy>=1.24",
+  "python-dotenv>=1.0",
+]
+
+[project.urls]
+Repository = "https://github.com/Yorks0n/ZotWatch"
+
+[project.scripts]
+zotwatch = "zotwatch.cli:main"
+
+[tool.setuptools]
+packages = ["src", "zotwatch", "zotwatch.resources"]
+include-package-data = false
+
+[tool.setuptools.package-data]
+"zotwatch.resources" = ["journal_metrics.csv"]

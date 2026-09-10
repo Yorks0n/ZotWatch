@@ -1,0 +1,10 @@
+include LICENSE README.md pyproject.toml
+recursive-include src *.py
+recursive-include zotwatch *.py *.csv
+prune tests
+prune config
+prune data
+prune reports
+prune public
+prune .github
+global-exclude .env *.pyc *.sqlite *.index
