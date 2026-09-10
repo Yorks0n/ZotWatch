@@ -1,0 +1,11 @@
+{
+  "Genome atlas": [1, 0, 0],
+  "Protein folding": [0, 1, 0],
+  "Alpha <cells> & evidence": [1, 0, 0],
+  "Beta molecules": [0.6, 0.8, 0],
+  "Gamma galaxies": [0, 0, 1],
+  "Delta chemistry": [0, 0, 1],
+  "Epsilon preprint": [1, 0, 0],
+  "Zeta ancient": [1, 0, 0],
+  "Eta undated": [1, 0, 0]
+}

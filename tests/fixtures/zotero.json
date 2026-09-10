@@ -1,0 +1,4 @@
+[
+  {"key":"LIB1","version":10,"data":{"key":"LIB1","version":10,"title":"Genome atlas","abstractNote":"Synthetic cells.","creators":[{"firstName":"Ada","lastName":"Example"}],"tags":[{"tag":"genomics"}],"collections":["SYNTHETIC"],"date":"2020-02-01","DOI":"10.0000/library","url":"https://example.invalid/library","publicationTitle":"Example Journal"}},
+  {"key":"LIB2","version":10,"data":{"key":"LIB2","version":10,"title":"Protein folding","creators":[{"firstName":"Ada","lastName":"Example"},{"firstName":"Bo","lastName":"Example"}],"tags":[],"date":"2021","publicationTitle":"Example Journal"}}
+]

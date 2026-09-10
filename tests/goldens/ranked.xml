@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8'?>
+<rss version="2.0"><channel><title>ZotWatcher Feed</title><link>https://example.com</link><description>AI assisted literature watch</description><lastBuildDate>Thu, 15 Jan 2026 12:00:00 +0000</lastBuildDate><item><title>Alpha &lt;cells&gt; &amp; evidence</title><link>https://example.invalid/alpha?a=1&amp;b=2</link><guid>alpha</guid><pubDate>Wed, 14 Jan 2026 12:00:00 +0000</pubDate><category>Example Journal</category><description>Synthetic &lt;script&gt;alert('x')&lt;/script&gt; &amp; text.
+Published: 2026-01-14T12:00:00+00:00
+Venue: Example Journal</description></item><item><title>Epsilon preprint</title><guid>epsilon</guid><pubDate>Thu, 15 Jan 2026 12:00:00 +0000</pubDate><description>Published: 2026-01-15T12:00:00+00:00
+Venue: Unknown</description></item><item><title>Zeta ancient</title><guid>zeta</guid><pubDate>Wed, 01 Jan 2025 12:00:00 +0000</pubDate><description>Published: 2025-01-01T12:00:00+00:00
+Venue: Unknown</description></item><item><title>Beta molecules</title><guid>beta</guid><pubDate>Sat, 10 Jan 2026 12:00:00 +0000</pubDate><category>Low SJR</category><description>Published: 2026-01-10T12:00:00+00:00
+Venue: Low SJR</description></item><item><title>Eta undated</title><guid>eta</guid><pubDate>Thu, 15 Jan 2026 12:00:00 +0000</pubDate><description>Published: Unknown
+Venue: Unknown</description></item><item><title>Gamma galaxies</title><guid>gamma</guid><pubDate>Wed, 14 Jan 2026 12:00:00 +0000</pubDate><description>Published: 2026-01-14T12:00:00+00:00
+Venue: Unknown</description></item><item><title>Delta chemistry</title><guid>delta</guid><pubDate>Wed, 14 Jan 2026 12:00:00 +0000</pubDate><description>Published: 2026-01-14T12:00:00+00:00
+Venue: Unknown</description></item></channel></rss>

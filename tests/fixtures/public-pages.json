@@ -1,0 +1,4 @@
+[
+  {"data":[{"id":"public-id-1","source":"crossref","source_identifier":"public-one","title":" Public &amp; synthetic ","authors":["Ada Example"],"published_at":"2026-01-14T12:00:00Z","candidate_type":"posted-content","candidate_group":"preprint","is_preprint":true,"metrics":{"cited_by":"2","bad":"unknown"}},{"id":"blank","title":" "}],"paging":{"next_offset":2}},
+  {"data":[{"id":"public-id-2","source":"arxiv","source_identifier":"public-two","title":"Synthetic second","authors":"Bo Example","published_at":"2026-01-13T00:00:00Z"}],"paging":{"next_offset":null}}
+]
