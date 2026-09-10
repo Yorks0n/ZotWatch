@@ -8,6 +8,8 @@ import yaml
 from zotwatch.config import ConfigError, load_v2_config
 from zotwatch.config.schema import build_config_schema
 
+from .helpers import FIXTURES
+
 
 def minimal_config() -> dict:
     return {
@@ -79,3 +81,18 @@ def test_schema_is_draft_2020_12_and_forbids_unknown_top_level_fields():
     schema = build_config_schema()
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert schema["additionalProperties"] is False
+
+
+@pytest.mark.parametrize("name", ["minimal.yaml", "preset.yaml", "custom.yaml"])
+def test_approved_config_fixtures_parse(name):
+    assert load_v2_config(FIXTURES / "config-v2" / name).schema_version == 2
+
+
+@pytest.mark.parametrize(
+    "name,code",
+    [("invalid-secret.yaml", "CONFIG_SCHEMA"), ("invalid-capability.yaml", "CAPABILITY_MISMATCH")],
+)
+def test_invalid_config_fixtures_fail_explicitly(name, code):
+    with pytest.raises(ConfigError) as raised:
+        load_v2_config(FIXTURES / "config-v2" / name)
+    assert raised.value.code == code

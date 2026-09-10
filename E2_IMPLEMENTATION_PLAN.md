@@ -1,8 +1,11 @@
 # E2 Implementation Plan — Config v2 & Provider/Credential Registry
 
-日期：2026-09-10  
-状态：待审阅；本文档不包含 production code 实现。  
-起点：`codex/v2` / `v2-e1-baseline` / `90b6c949fe18ad485010e6548b6cda1c8badbfa0`。  
+日期：2026-09-10
+
+状态：待审阅；本文档不包含 production code 实现。
+
+起点：`codex/v2` / `v2-e1-baseline` / `90b6c949fe18ad485010e6548b6cda1c8badbfa0`。
+
 目标分支：`codex/v2-e2`。
 
 ## 1. 范围和实现原则
@@ -274,13 +277,17 @@ Adapter 还提供纯函数 `project_legacy_to_v2(settings) -> LegacyMappingRepor
 
 计划本身先作为独立 docs-only commit 提交到 `codex/v2-e2`，审阅通过前不写 production code。实施后保持一个 E2 PR，按以下可独立审阅的 commits 组织：
 
-1. `feat(config): add strict v2 models and schema loader`  
+1. `feat(config): add strict v2 models and schema loader`
+
    只加入 models、schema、YAML loader、基础结构测试。
-2. `feat(config): add provider and credential registry`  
+2. `feat(config): add provider and credential registry`
+
    加入单一 registry、Custom protocols、capability/URL 语义、公共池内部 resource 及测试。
-3. `feat(config): isolate legacy adapter and validation entrypoint`  
+3. `feat(config): isolate legacy adapter and validation entrypoint`
+
    加入 legacy projection/report、混合模式拒绝和离线 validate；保持旧执行 pipeline。
-4. `test(config): verify installed E2 contract and immutable baselines`  
+4. `test(config): verify installed E2 contract and immutable baselines`
+
    加入 wheel/editable 验收、README 和 CI gate；明确检查 E0 fixtures/goldens 无 diff。
 
 PR 从 `codex/v2-e2` 指向 `codex/v2`。不混入 harvester、workflow/template、AI adapter、算法或 state 变更。合并前要求 E0 characterization、E1 packaging/install 和 E2 config matrix 全部通过；合并后记录完整 SHA，并在版本策略允许时建立 `v2-e2-baseline`。
