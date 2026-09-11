@@ -71,7 +71,7 @@ flowchart LR
 | E4-BUG-A3 | profile JSON、FAISS 损坏或缺一个文件 | 分别在 JSON/FAISS loader 中偶然失败，没有统一恢复 | manifest/checksum/结构验证失败；CLI 重建，低层 ranker fail closed |
 | E4-BUG-A4 | engine/profile input rules/config 改变 | file-exists/monthly-cache 仍视为有效 | engine/state ABI 和 relevant-config fingerprint 决定失效 |
 | E4-BUG-A5 | 构建期间另一个进程提交新 library revision | 新文件可能声明不了稳定输入，或与最新 SQLite 混用 | 从一个 SQLite snapshot 构建，publish 前复核；变化则丢弃 staging |
-| E4-BUG-A6 | workspace 切换 Zotero user 但复用 state path | revision 数字和旧 rows 可能被误当成新 library | SQLite 与 manifest 都绑定 privacy-preserving library identity；缺失/变化先 full sync |
+| E4-BUG-A6 | workspace 切换 Zotero user 但复用 state path | revision 数字和旧 rows 可能被误当成新 library | SQLite 与 manifest 都绑定 pseudonymous identity fingerprint；缺失/变化先 full sync |
 
 这些是 E4 intentional correctness changes。原 E0 profile/ranking/RSS/HTML golden 内容继续保持；不会用批量重录 expected behavior 掩盖变化。
 
@@ -94,7 +94,7 @@ FAISS can be loaded and agrees with embedding/profile metadata
 
 “当前”由一个小型原子 pointer 唯一决定，不由目录 mtime、文件存在、最新目录名或 Actions cache hit 决定。旧 generation 即使文件完整，只要与当前 SQLite revision 不一致，就只能保留作诊断/回滚，不能参与 ranking。
 
-SQLite 的 `last_modified_version` 与新增的 `library_identity_sha256` 都是 mirror identity 的一部分。E4 不把 raw Zotero user ID 写入 manifest；identity 使用 canonical library type + library ID 的 SHA-256。新增 metadata key 不改变 E3 tables，旧 SQLite 可原样打开。
+SQLite 的 `last_modified_version` 与新增的 `library_identity_sha256` 都是 mirror identity 的一部分。E4 不把 raw Zotero user ID 写入 manifest；identity 使用 canonical library type + library ID 的 SHA-256，称为 **pseudonymous identity fingerprint**。它降低直接暴露，不声称提供匿名化；能获知候选 user ID 的主体仍可重算 fingerprint。新增 metadata key 不改变 E3 tables，旧 SQLite 可原样打开。
 
 ## 5. Local state layout
 
@@ -189,14 +189,14 @@ SQLite 的 `last_modified_version` 与新增的 `library_identity_sha256` 都是
 Compatibility fields：
 
 - exact supported `schema_version` 与 `state_compatibility_version`；
-- `engine.version`、`profile_builder_abi`；E4 首版 correctness-first，engine version 改变即 rebuild，后续可在 ABI 契约成熟后放宽 patch-version reuse；
+- `profile_builder_abi`；完整 `engine.version` 记录用于审计，不作为长期 hard compatibility identity；
 - library identity、committed revision、snapshot fingerprint、item count；
 - embedding provider/model identifier/revision/fingerprint、input schema、normalization、input-set fingerprint、dimension；
 - profile schema/config fingerprint/aggregation；
 - index format/factory/metric/count/dimension；
 - 所有 artifact 相对路径与 SHA-256。
 
-Informational fields：generation ID、run ID、timestamp。它们用于审计和诊断，不参与 reuse 判定。manifest 不包含 Zotero raw ID、item title/abstract、API endpoint/key、environment/Secret name、workspace absolute path 或 durable feedback。
+Informational fields：generation ID、run ID、timestamp、完整 engine version。它们用于审计和诊断，不参与 reuse 判定。manifest 不包含 Zotero raw ID、item title/abstract、API endpoint/key、environment/Secret name、workspace absolute path 或 durable feedback。
 
 处理规则：
 
@@ -212,7 +212,7 @@ Informational fields：generation ID、run ID、timestamp。它们用于审计�
 
 ### 7.1 Library identity 与 snapshot
 
-- `library_identity_sha256 = sha256(canonical({source: "zotero", library_type, library_id}))`。首版仍是 user library；不公开 raw user ID。
+- `library_identity_sha256 = sha256(canonical({source: "zotero", library_type, library_id}))`。首版仍是 user library；manifest 不写 raw user ID。它是 pseudonymous identity fingerprint，不是匿名身份。
 - E4 向 SQLite metadata 增加同名 identity。旧 DB 缺少 identity 或 identity 与当前凭据不一致时，不能只“认领”旧 rows；下一次 `profile`/`watch` 先执行 E3 full sync，并在 rows/watermark 的同一 atomic apply 中写入 identity。
 - `snapshot_sha256` 对稳定按 item key 排序的 profile inputs 计算，包括 key、Zotero item version、embedding input fingerprint，以及影响 profile summary 的 venue。它不读取或信任旧 embedding BLOB。
 - snapshot 与 revision 在同一个 SQLite read transaction 中采集。revision 缺失/非法时不能构建；交由 E3 initial/full recovery。
@@ -227,7 +227,9 @@ E4 首版每次 generation rebuild 都重算全部 active items，不从 `items.
 
 新增只面向本地 `TextVectorizer` 的 `EmbeddingRuntimeDescriptor`；这不是 AI provider adapter。descriptor 至少提供：provider、requested model identifier、可解析时的 upstream revision、engine normalization/input-schema version，以及 required runtime fingerprint。
 
-默认 local model fingerprint 使用可用的 resolved model revision/cache metadata、相关 runtime package versions，并加入固定 engine-owned probe texts 的实际 float32 normalized output digest。这样即使 model name 未变但本地 weights/runtime 改变，也会产生新 fingerprint。无法取得 upstream revision 时 `model_revision` 可为 null，但 fingerprint 仍必须存在；测试 vectorizer 显式提供固定 fingerprint，不访问网络。
+Hard model identity 优先由稳定、离线可重现的 descriptor 组成：provider、requested model identifier、可用时的 resolved immutable upstream revision/commit、稳定的 model artifact/config identity、embedding input schema、normalization version 与 profile builder ABI。无法取得 upstream revision 时 `model_revision` 可为 null，但必须有稳定 artifact/config identity；不能用 runner-specific runtime package version 或 raw floating output替代模型身份。
+
+固定 engine-owned probe texts 可以保留为 diagnostic metadata，但 raw normalized float32 bytes 的 SHA-256 不属于 hard compatibility。若实现时需要把 probe 纳入兼容 fingerprint，必须先定义带版本号的量化规则（固定 dtype、rounding mode、decimal precision、shape/order），只 hash量化后的 canonical representation；首版优先完全排除 probe diagnostic。测试 vectorizer显式提供固定 descriptor，不访问网络。
 
 输出 dimension 从实际 vector matrix 取得并与 descriptor probe、NPZ、profile centroid 和 FAISS `d` 交叉验证。候选 encode 的 dimension 在 ranking 时也必须等于 manifest dimension。
 
@@ -274,7 +276,11 @@ stateDiagram-v2
 6. validated staging 在同一 filesystem rename 为唯一 `generations/<generation-id>`。随后把完整 `current.json.tmp` fsync 并以 `os.replace()` 原子替换 pointer；必要目录也 fsync。
 7. pointer 替换前的异常保留上一 pointer。rename 后、pointer 前中断只产生 unreferenced完整 generation；它不会被自动选中。pointer 替换后 generation 已不可变且完整。
 
-E4 增加 `<state>/.zotwatch-state.lock` 的跨进程 advisory lease。官方 CLI 在一个 `watch` 中从 sync 前持有到 dedupe/rank 完成，在 `profile` 中从 sync 前持有到 ensure/build 完成；因此两个 engine 进程不能制造“新 SQLite + 旧 rank handle”。StateManager 即使持锁仍执行 publish-time revision/snapshot 复核，以防直接 SQLite writer 或低层 API 绕过 coordinator。锁文件不承载状态，进程退出后 OS lock 自动释放。
+E4 增加 `<state>/.zotwatch-state.lock` 的跨进程 advisory lease。**lease ownership 由调用边界显式决定：** official `profile`/`watch` coordinator 在一次 run 中 acquire 一次，并把同一个 `StateLease` capability/参数传给 ingestor、StateManager、ProfileBuilder、CandidateFetcher 与 WorkRanker。低层方法看到有效 lease 时只验证 ownership/state root，不再次 acquire。
+
+official `watch` 的唯一 ownership 顺序是 `acquire -> E3 sync -> ensure/build -> CandidateFetcher -> dedupe -> rank(same StateHandle) -> release`；`profile` 是 `acquire -> E3 sync -> ensure/build -> release`。standalone StateManager/ProfileBuilder/WorkRanker 若未收到 coordinator lease，可以在自己的公开操作边界 acquire一个短生命周期 lease并在返回前释放；内部 helper不能偷偷嵌套 acquire。测试用 non-reentrant fake lock 证明 official path只 acquire一次，避免依赖某个 file-lock库的递归行为。
+
+StateManager 即使收到已持有 lease仍执行 publish-time revision/snapshot复核，以防直接 SQLite writer或低层 API绕过 coordinator。锁文件不承载状态，进程退出后 OS lock自动释放。
 
 首版不自动删除历史 generation；中断 staging 和 unreferenced generation 可在持锁时安全识别，默认只清理明确的 `.tmp` staging。generation retention/GC policy 可后续加入，避免删除仍被一个低层 `StateHandle` 使用的 immutable files。
 
@@ -296,7 +302,8 @@ E4 增加 `<state>/.zotwatch-state.lock` 的跨进程 advisory lease。官方 CL
 | relevant profile config/input schema/normalization/index metric changed | full rebuild | computational semantics 变化 |
 | ranking-only weight/threshold changed | reuse | 不改变 profile/index；ranker仍使用新 runtime weights |
 | state/profile/index schema 或 builder ABI changed | full rebuild | 无显式 migrator时不解释旧格式 |
-| engine version changed | full rebuild | E4 首版保守策略；版本与 state 明确绑定 |
+| engine version changed，ABI/schema/semantic fingerprints不变 | reuse | 完整版本只供审计；hard compatibility由显式 ABI/schema/fingerprints决定 |
+| engine upgrade改变 ABI/schema/semantic fingerprint | full rebuild | 变化由对应兼容字段表达，不依赖版本字符串猜测 |
 | generation timestamp/run ID changed | no invalidation | informational only |
 
 ## 10. Atomic publication 与 SQLite boundary
