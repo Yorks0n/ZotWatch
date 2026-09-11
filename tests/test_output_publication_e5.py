@@ -56,3 +56,24 @@ def test_failed_render_preserves_previous_generation_and_aliases(tmp_path):
 def test_output_allowlist_rejects_unsafe_artifact_names(tmp_path, name):
     with pytest.raises(PublicationError):
         OutputPublisher(tmp_path).publish("run-1", {name: render_text("x")})
+
+
+def test_alias_failure_after_pointer_does_not_invalidate_authoritative_generation(tmp_path, monkeypatch):
+    reports = tmp_path / "reports"
+    publisher = OutputPublisher(reports)
+    original = publisher._atomic_bytes
+
+    def fail_alias(path, content):
+        if path == reports / "feed.xml":
+            raise OSError("synthetic alias failure")
+        return original(path, content)
+
+    monkeypatch.setattr(publisher, "_atomic_bytes", fail_alias)
+    result = publisher.publish("run-1", {"feed.xml": render_text("<rss/>")})
+    assert result.generation_id == "run-1"
+    pointer = json.loads((reports / ".zotwatch-output/latest-success.json").read_text())
+    assert pointer["generation_id"] == "run-1"
+    assert not (reports / "feed.xml").exists()
+
+    OutputPublisher(reports)._reconcile_aliases()
+    assert (reports / "feed.xml").read_text() == "<rss/>"

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from hashlib import sha256
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -18,6 +19,7 @@ _ALLOWED = {
     "feed.xml": "application/rss+xml",
     "report.html": "text/html; charset=utf-8",
 }
+logger = logging.getLogger(__name__)
 
 
 class PublicationError(RuntimeError):
@@ -54,6 +56,7 @@ class OutputPublisher:
             raise PublicationError("Output generation already exists")
         phase = "render"
         try:
+            self._reconcile_aliases()
             if staging.exists():
                 shutil.rmtree(staging)
             staging.mkdir(parents=True)
@@ -75,7 +78,10 @@ class OutputPublisher:
                 (json.dumps(pointer, sort_keys=True, separators=(",", ":")) + "\n").encode(),
             )
             for name in renderers:
-                self._atomic_bytes(self.root / name, (generation / name).read_bytes())
+                try:
+                    self._atomic_bytes(self.root / name, (generation / name).read_bytes())
+                except OSError:
+                    logger.warning("Compatibility output alias could not be refreshed: %s", name)
             return PublishedGeneration(run_id, artifacts)
         except PublicationError:
             if staging.exists():
@@ -115,6 +121,23 @@ class OutputPublisher:
             media_type=_ALLOWED[name],
             publishable=True,
         )
+
+    def _reconcile_aliases(self) -> None:
+        pointer_path = self.internal / "latest-success.json"
+        if not pointer_path.exists():
+            return
+        try:
+            pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+            for raw in pointer.get("artifacts", []):
+                artifact = ArtifactReference.model_validate(raw)
+                name = Path(artifact.path).name
+                if name not in _ALLOWED:
+                    continue
+                source = self.root / artifact.path
+                if source.is_file() and sha256(source.read_bytes()).hexdigest() == artifact.sha256:
+                    self._atomic_bytes(self.root / name, source.read_bytes())
+        except Exception:
+            logger.warning("Previous compatibility aliases could not be reconciled")
 
     @staticmethod
     def _atomic_bytes(path: Path, content: bytes) -> None:
