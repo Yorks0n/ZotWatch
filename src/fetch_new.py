@@ -5,6 +5,7 @@ import json
 import html
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
@@ -20,6 +21,15 @@ from .utils import ensure_isoformat, iso_to_datetime, utc_now
 logger = logging.getLogger(__name__)
 ARXIV_REQUEST_DELAY_SECONDS = 3.1
 ARXIV_MAX_RESULTS = 50
+
+
+@dataclass(frozen=True)
+class CandidateFetchOutcome:
+    candidates: List[CandidateWork]
+    status: str
+    used_cache: bool
+    request_complete: bool
+    failed_sources: int = 0
 
 
 class CandidateFetcher:
@@ -43,6 +53,9 @@ class CandidateFetcher:
         self.top_venues = self._load_top_venues()
 
     def fetch_all(self) -> List[CandidateWork]:
+        return self.fetch_with_outcome().candidates
+
+    def fetch_with_outcome(self) -> CandidateFetchOutcome:
         stale_candidates: List[CandidateWork] | None = None
         cached = self._load_cache()
         if cached:
@@ -55,7 +68,7 @@ class CandidateFetcher:
                     fetched_at.isoformat(),
                     age.total_seconds() / 3600,
                 )
-                return candidates
+                return CandidateFetchOutcome(candidates, "succeeded", True, True)
             logger.info(
                 "Candidate cache is stale (age %.1f hours); refreshing",
                 age.total_seconds() / 3600,
@@ -123,11 +136,16 @@ class CandidateFetcher:
                 enabled_sources,
                 len(stale_candidates),
             )
-            return stale_candidates
+            return CandidateFetchOutcome(
+                stale_candidates, "degraded", True, False, failed_sources
+            )
 
         logger.info("Fetched %d candidate works", len(results))
         self._save_cache(results)
-        return results
+        if enabled_sources and failed_sources == enabled_sources:
+            return CandidateFetchOutcome(results, "failed", False, False, failed_sources)
+        status = "degraded" if failed_sources else "succeeded"
+        return CandidateFetchOutcome(results, status, False, True, failed_sources)
 
     def _run_fetch_source(self, source_name: str, fetcher) -> tuple[List[CandidateWork], bool]:
         try:
