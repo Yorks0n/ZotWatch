@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
+from .computational_state import library_snapshot_fingerprints
 from .models import ZoteroItem
 
 
@@ -43,6 +44,15 @@ class SyncApplyResult:
     inserted: int = 0
     changed: int = 0
     removed: int = 0
+
+
+@dataclass(frozen=True)
+class ProfileSnapshot:
+    library_identity_sha256: str
+    revision: int
+    items: tuple[ZoteroItem, ...]
+    snapshot_sha256: str
+    embedding_input_set_sha256: str
 
 
 class ProfileStorage:
@@ -87,6 +97,12 @@ class ProfileStorage:
     def set_last_modified_version(self, version: int) -> None:
         self.set_metadata("last_modified_version", str(version))
 
+    def library_identity_sha256(self) -> Optional[str]:
+        return self.get_metadata("library_identity_sha256")
+
+    def set_library_identity_sha256(self, identity: str) -> None:
+        self.set_metadata("library_identity_sha256", identity)
+
     # item helpers
     def upsert_item(self, item: ZoteroItem, content_hash: Optional[str] = None) -> None:
         _execute_upsert(self.connect(), _item_data(item, content_hash))
@@ -107,6 +123,7 @@ class ProfileStorage:
         *,
         full: bool,
         revision: int,
+        library_identity_sha256: str | None = None,
     ) -> SyncApplyResult:
         """Apply one complete Zotero revision and its watermark atomically.
 
@@ -168,6 +185,11 @@ class ProfileStorage:
                 "REPLACE INTO metadata(key, value) VALUES(?, ?)",
                 ("last_modified_version", str(revision)),
             )
+            if library_identity_sha256 is not None:
+                conn.execute(
+                    "REPLACE INTO metadata(key, value) VALUES(?, ?)",
+                    ("library_identity_sha256", library_identity_sha256),
+                )
             conn.commit()
         except Exception:
             conn.rollback()
@@ -182,10 +204,63 @@ class ProfileStorage:
         )
         self.connect().commit()
 
+    def set_embeddings(self, embeddings: Iterable[Tuple[str, bytes]]) -> None:
+        conn = self.connect()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.executemany(
+                "UPDATE items SET embedding = ?, updated_at=CURRENT_TIMESTAMP WHERE key = ?",
+                ((vector, key) for key, vector in embeddings),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
     def iter_items(self) -> Iterable[ZoteroItem]:
         cur = self.connect().execute("SELECT * FROM items")
         for row in cur:
             yield _row_to_item(row)
+
+    def read_profile_snapshot(self) -> ProfileSnapshot:
+        conn = self.connect()
+        conn.execute("BEGIN")
+        try:
+            metadata = {
+                row["key"]: row["value"]
+                for row in conn.execute(
+                    "SELECT key, value FROM metadata WHERE key IN (?, ?)",
+                    ("last_modified_version", "library_identity_sha256"),
+                )
+            }
+            revision_value = metadata.get("last_modified_version")
+            identity = metadata.get("library_identity_sha256")
+            if revision_value is None:
+                raise ValueError("Committed Zotero library revision is missing")
+            try:
+                revision = int(revision_value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("Committed Zotero library revision is invalid") from exc
+            if revision < 0:
+                raise ValueError("Committed Zotero library revision is invalid")
+            if not identity:
+                raise ValueError("Zotero library identity fingerprint is missing")
+            items = tuple(
+                _row_to_item(row)
+                for row in conn.execute("SELECT * FROM items ORDER BY key ASC")
+            )
+            snapshot_sha256, input_set_sha256 = library_snapshot_fingerprints(items)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        return ProfileSnapshot(
+            library_identity_sha256=identity,
+            revision=revision,
+            items=items,
+            snapshot_sha256=snapshot_sha256,
+            embedding_input_set_sha256=input_set_sha256,
+        )
 
     def fetch_items_without_embedding(self) -> List[Tuple[ZoteroItem, Optional[str]]]:
         cur = self.connect().execute(
@@ -269,6 +344,10 @@ def _execute_upsert(conn: sqlite3.Connection, data: Sequence[object]) -> None:
             url=excluded.url,
             raw_json=excluded.raw_json,
             content_hash=excluded.content_hash,
+            embedding=CASE
+                WHEN items.content_hash IS excluded.content_hash THEN items.embedding
+                ELSE NULL
+            END,
             updated_at=CURRENT_TIMESTAMP
         """,
         data,
@@ -283,4 +362,4 @@ def _delete_keys(conn: sqlite3.Connection, keys: Iterable[str]) -> None:
         conn.execute(f"DELETE FROM items WHERE key IN ({placeholders})", batch)
 
 
-__all__ = ["ProfileStorage", "SyncApplyResult"]
+__all__ = ["ProfileSnapshot", "ProfileStorage", "SyncApplyResult"]

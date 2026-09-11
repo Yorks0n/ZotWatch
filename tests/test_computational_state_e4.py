@@ -17,7 +17,7 @@ class OtherFixedVectors(FixedVectors):
 
 
 def test_profile_build_publishes_versioned_generation(workspace, library, settings):
-    library.set_metadata("library_identity_sha256", "synthetic-library")
+    library.set_metadata("library_identity_sha256", "a" * 64)
     library.set_last_modified_version(10)
 
     artifacts = ProfileBuilder(workspace, library, settings, FixedVectors()).run()
@@ -42,7 +42,7 @@ def test_content_change_invalidates_legacy_embedding(storage):
 
 
 def test_ranker_rejects_generation_from_another_model(workspace, library, settings):
-    library.set_metadata("library_identity_sha256", "synthetic-library")
+    library.set_metadata("library_identity_sha256", "a" * 64)
     library.set_last_modified_version(10)
     ProfileBuilder(workspace, library, settings, FixedVectors()).run()
 

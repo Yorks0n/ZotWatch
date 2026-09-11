@@ -100,6 +100,9 @@ class ProfileArtifacts:
     sqlite_path: str
     faiss_path: str
     profile_json_path: str
+    manifest_path: str = ""
+    embeddings_path: str = ""
+    generation_id: str = ""
 
 
 def iter_batches(items: Sequence, batch_size: int) -> Iterable[Sequence]:

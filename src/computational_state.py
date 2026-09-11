@@ -2,16 +2,22 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
+import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from importlib import metadata as importlib_metadata
 from pathlib import Path
-from typing import Any, Iterable, Literal, Mapping
+from typing import Any, Callable, Iterable, Iterator, Literal, Mapping
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .faiss_store import FaissIndex
 from .models import ZoteroItem
+from .utils import json_dumps
 
 
 MANIFEST_SCHEMA_VERSION = 1
@@ -45,6 +51,76 @@ class StateFutureSchemaError(StateCompatibilityError):
 
 class StateChangedDuringBuild(ComputationalStateError):
     """The committed SQLite mirror changed before publication."""
+
+
+@dataclass
+class StateLease:
+    state_dir: Path
+    _owner: "StateCoordinator"
+    _active: bool = True
+
+    def validate(self, coordinator: "StateCoordinator") -> None:
+        if not self._active or self._owner is not coordinator:
+            raise RuntimeError("State lease is inactive or belongs to another coordinator")
+
+
+class StateCoordinator:
+    """Own the one non-reentrant cross-process lease for an official run."""
+
+    def __init__(self, state_dir: Path | str):
+        self.state_dir = Path(state_dir).resolve()
+        self.lock_path = self.state_dir / ".zotwatch-state.lock"
+        self._active_lease: StateLease | None = None
+
+    @contextmanager
+    def acquire(self) -> Iterator[StateLease]:
+        if self._active_lease is not None:
+            raise RuntimeError("StateCoordinator lease is deliberately non-reentrant")
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        stream = self.lock_path.open("a+b")
+        _lock_stream(stream)
+        lease = StateLease(state_dir=self.state_dir, _owner=self)
+        self._active_lease = lease
+        try:
+            yield lease
+        finally:
+            lease._active = False
+            self._active_lease = None
+            _unlock_stream(stream)
+            stream.close()
+
+    def validate(self, lease: StateLease) -> None:
+        lease.validate(self)
+        if lease.state_dir != self.state_dir:
+            raise RuntimeError("State lease belongs to another state directory")
+
+
+def _lock_stream(stream) -> None:
+    if os.name == "nt":  # pragma: no cover - exercised on Windows runners later
+        import msvcrt
+
+        stream.seek(0, os.SEEK_END)
+        if stream.tell() == 0:
+            stream.write(b"0")
+            stream.flush()
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock_stream(stream) -> None:
+    if os.name == "nt":  # pragma: no cover - exercised on Windows runners later
+        import msvcrt
+
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+
+        fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
 
 
 def canonical_json_bytes(value: Any) -> bytes:
@@ -93,6 +169,7 @@ class EmbeddingRuntimeDescriptor:
     model_identifier: str
     model_revision: str | None
     artifact_identity: str
+    dimension: int | None = None
     input_schema: str = EMBEDDING_INPUT_SCHEMA
     normalization: str = EMBEDDING_NORMALIZATION
     profile_builder_abi: int = PROFILE_BUILDER_ABI
@@ -101,6 +178,7 @@ class EmbeddingRuntimeDescriptor:
     def compatibility_payload(self) -> dict[str, Any]:
         return {
             "artifact_identity": self.artifact_identity,
+            "dimension": self.dimension,
             "input_schema": self.input_schema,
             "model_identifier": self.model_identifier,
             "model_revision": self.model_revision,
@@ -133,6 +211,7 @@ def descriptor_for_vectorizer(vectorizer: Any) -> EmbeddingRuntimeDescriptor:
         model_identifier=model_identifier,
         model_revision=getattr(vectorizer, "model_revision", None),
         artifact_identity=str(artifact_identity),
+        dimension=getattr(vectorizer, "dimension", None),
         diagnostic_probe_fingerprint=getattr(
             vectorizer, "diagnostic_probe_fingerprint", None
         ),
@@ -272,9 +351,29 @@ class StateExpectation:
     library_identity_sha256: str
     library_revision: int
     library_snapshot_sha256: str
+    embedding_input_set_sha256: str
     item_count: int
     embedding: EmbeddingRuntimeDescriptor
     profile_config_sha256: str
+
+
+def expectation_from_snapshot(
+    snapshot: Any,
+    descriptor: EmbeddingRuntimeDescriptor,
+    *,
+    profile_config_sha256: str | None = None,
+) -> StateExpectation:
+    return StateExpectation(
+        library_identity_sha256=snapshot.library_identity_sha256,
+        library_revision=snapshot.revision,
+        library_snapshot_sha256=snapshot.snapshot_sha256,
+        embedding_input_set_sha256=snapshot.embedding_input_set_sha256,
+        item_count=len(snapshot.items),
+        embedding=descriptor,
+        profile_config_sha256=(
+            profile_config_sha256 or profile_config_fingerprint(descriptor)
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -290,12 +389,27 @@ class StateHandle:
 
 
 class StateManager:
-    def __init__(self, state_dir: Path | str):
+    def __init__(
+        self,
+        state_dir: Path | str,
+        *,
+        coordinator: StateCoordinator | None = None,
+    ):
         self.state_dir = Path(state_dir)
         self.root = self.state_dir / "computational"
         self.generations_dir = self.root / "generations"
         self.staging_dir = self.root / "staging"
         self.current_path = self.root / "current.json"
+        self.coordinator = coordinator or StateCoordinator(self.state_dir)
+
+    @contextmanager
+    def lease_scope(self, lease: StateLease | None = None) -> Iterator[StateLease]:
+        if lease is not None:
+            self.coordinator.validate(lease)
+            yield lease
+            return
+        with self.coordinator.acquire() as owned:
+            yield owned
 
     def load_current(self, expectation: StateExpectation) -> StateHandle:
         pointer_data = self._read_json(self.current_path, "current pointer")
@@ -343,6 +457,186 @@ class StateManager:
             index_path=index_path,
             manifest=manifest,
             profile=profile,
+        )
+
+    def publish_generation(
+        self,
+        *,
+        expectation: StateExpectation,
+        vectors: np.ndarray,
+        keys: list[str],
+        profile: dict[str, Any],
+        verify_current: Callable[[], StateExpectation],
+        lease: StateLease | None = None,
+        created_at: str | None = None,
+    ) -> StateHandle:
+        with self.lease_scope(lease) as active_lease:
+            self.coordinator.validate(active_lease)
+            return self._publish_generation_locked(
+                expectation=expectation,
+                vectors=vectors,
+                keys=keys,
+                profile=profile,
+                verify_current=verify_current,
+                created_at=created_at,
+            )
+
+    def _publish_generation_locked(
+        self,
+        *,
+        expectation: StateExpectation,
+        vectors: np.ndarray,
+        keys: list[str],
+        profile: dict[str, Any],
+        verify_current: Callable[[], StateExpectation],
+        created_at: str | None,
+    ) -> StateHandle:
+        vectors = np.asarray(vectors, dtype=np.float32)
+        if vectors.ndim != 2 or vectors.shape[0] != expectation.item_count:
+            raise ValueError("Embedding matrix does not match the library snapshot")
+        if vectors.shape[0] == 0 or vectors.shape[1] == 0:
+            raise ValueError("A computational generation requires non-empty embeddings")
+        if len(keys) != expectation.item_count or len(set(keys)) != len(keys):
+            raise ValueError("Embedding keys do not match the library snapshot")
+        if expectation.embedding.dimension not in (None, vectors.shape[1]):
+            raise StateCompatibilityError("Runtime embedding dimension changed during build")
+
+        run_id = uuid.uuid4().hex
+        generation_id = (
+            f"{expectation.library_revision}-"
+            f"{expectation.library_snapshot_sha256[:12]}-{run_id[:12]}"
+        )
+        timestamp = created_at or datetime.now(timezone.utc).isoformat()
+        self.staging_dir.mkdir(parents=True, exist_ok=True)
+        self.generations_dir.mkdir(parents=True, exist_ok=True)
+        staging = self.staging_dir / f"{run_id}.tmp"
+        final_dir = self.generations_dir / generation_id
+        staging.mkdir()
+        profile_path = staging / "profile.json"
+        embeddings_path = staging / "embeddings.npz"
+        index_path = staging / "faiss.index"
+        manifest_path = staging / "state-manifest.json"
+        renamed = False
+        try:
+            _write_text_fsync(profile_path, json_dumps(profile, indent=2))
+            with embeddings_path.open("wb") as stream:
+                np.savez(stream, vectors=vectors, keys=np.asarray(keys, dtype=np.str_))
+                stream.flush()
+                os.fsync(stream.fileno())
+            index, _ = FaissIndex.from_vectors(vectors)
+            index.save(index_path)
+            _fsync_file(index_path)
+
+            descriptor = expectation.embedding
+            manifest = StateManifest(
+                schema_version=MANIFEST_SCHEMA_VERSION,
+                state_compatibility_version=STATE_COMPATIBILITY_VERSION,
+                generation=GenerationMetadata(
+                    id=generation_id,
+                    run_id=run_id,
+                    created_at=timestamp,
+                ),
+                engine=EngineMetadata(
+                    version=installed_engine_version(),
+                    profile_builder_abi=PROFILE_BUILDER_ABI,
+                ),
+                library=LibraryMetadata(
+                    identity_sha256=expectation.library_identity_sha256,
+                    revision=expectation.library_revision,
+                    snapshot_sha256=expectation.library_snapshot_sha256,
+                    item_count=expectation.item_count,
+                ),
+                embedding=EmbeddingMetadata(
+                    provider=descriptor.provider,
+                    model_identifier=descriptor.model_identifier,
+                    model_revision=descriptor.model_revision,
+                    artifact_identity=descriptor.artifact_identity,
+                    model_fingerprint_sha256=descriptor.hard_fingerprint_sha256,
+                    diagnostic_probe_fingerprint=descriptor.diagnostic_probe_fingerprint,
+                    input_schema=descriptor.input_schema,
+                    normalization=descriptor.normalization,
+                    input_set_sha256=expectation.embedding_input_set_sha256,
+                    dimension=vectors.shape[1],
+                    artifact="embeddings.npz",
+                    artifact_sha256=sha256_file(embeddings_path),
+                ),
+                profile=ProfileMetadata(
+                    schema_version=PROFILE_SCHEMA_VERSION,
+                    config_sha256=expectation.profile_config_sha256,
+                    aggregation=PROFILE_AGGREGATION,
+                    artifact="profile.json",
+                    artifact_sha256=sha256_file(profile_path),
+                ),
+                index=IndexMetadata(
+                    format="faiss",
+                    format_version=FAISS_FORMAT_VERSION,
+                    factory=FAISS_FACTORY,
+                    metric=FAISS_METRIC,
+                    artifact="faiss.index",
+                    artifact_sha256=sha256_file(index_path),
+                    dimension=vectors.shape[1],
+                    ntotal=vectors.shape[0],
+                ),
+            )
+            _write_text_fsync(
+                manifest_path,
+                json_dumps(manifest.model_dump(mode="json"), indent=2),
+            )
+            self._validate_staged(staging, manifest, profile)
+
+            if verify_current() != expectation:
+                raise StateChangedDuringBuild(
+                    "Committed Zotero library changed during profile generation"
+                )
+
+            os.replace(staging, final_dir)
+            renamed = True
+            _fsync_directory(self.generations_dir)
+            final_manifest = final_dir / "state-manifest.json"
+            pointer = CurrentPointer(
+                schema_version=POINTER_SCHEMA_VERSION,
+                generation_id=generation_id,
+                manifest_sha256=sha256_file(final_manifest),
+            )
+            self.root.mkdir(parents=True, exist_ok=True)
+            pointer_tmp = self.root / f"current.{run_id}.tmp"
+            _write_text_fsync(
+                pointer_tmp,
+                json_dumps(pointer.model_dump(mode="json"), indent=2),
+            )
+            os.replace(pointer_tmp, self.current_path)
+            _fsync_directory(self.root)
+            return self.load_current(expectation)
+        finally:
+            if not renamed and staging.exists():
+                shutil.rmtree(staging)
+
+    def _validate_staged(
+        self,
+        staging: Path,
+        manifest: StateManifest,
+        profile: dict[str, Any],
+    ) -> None:
+        self._check_file(
+            staging / manifest.profile.artifact,
+            manifest.profile.artifact_sha256,
+            "profile",
+        )
+        self._check_file(
+            staging / manifest.embedding.artifact,
+            manifest.embedding.artifact_sha256,
+            "embeddings",
+        )
+        self._check_file(
+            staging / manifest.index.artifact,
+            manifest.index.artifact_sha256,
+            "FAISS index",
+        )
+        self._validate_artifacts(
+            manifest,
+            profile=profile,
+            embeddings_path=staging / manifest.embedding.artifact,
+            index_path=staging / manifest.index.artifact,
         )
 
     @staticmethod
@@ -400,8 +694,18 @@ class StateManager:
                 "embedding input schema",
             ),
             (
+                manifest.embedding.input_set_sha256
+                == expectation.embedding_input_set_sha256,
+                "embedding input set",
+            ),
+            (
                 manifest.embedding.normalization == expectation.embedding.normalization,
                 "embedding normalization",
+            ),
+            (
+                expectation.embedding.dimension is None
+                or manifest.embedding.dimension == expectation.embedding.dimension,
+                "embedding dimension",
             ),
             (
                 manifest.profile.config_sha256 == expectation.profile_config_sha256,
@@ -463,6 +767,29 @@ class StateManager:
             raise StateCorruptionError("FAISS factory does not match manifest")
 
 
+def _write_text_fsync(path: Path, value: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as stream:
+        stream.write(value)
+        stream.flush()
+        os.fsync(stream.fileno())
+
+
+def _fsync_file(path: Path) -> None:
+    with path.open("rb") as stream:
+        os.fsync(stream.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    if os.name == "nt":  # pragma: no cover - directory fsync is POSIX-specific
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 __all__ = [
     "ComputationalStateError",
     "CurrentPointer",
@@ -475,9 +802,12 @@ __all__ = [
     "StateHandle",
     "StateManager",
     "StateManifest",
+    "StateCoordinator",
+    "StateLease",
     "canonical_json_bytes",
     "descriptor_for_vectorizer",
     "embedding_input_fingerprint",
+    "expectation_from_snapshot",
     "installed_engine_version",
     "library_snapshot_fingerprints",
     "profile_config_fingerprint",

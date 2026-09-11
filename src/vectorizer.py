@@ -71,6 +71,7 @@ class TextVectorizer:
             model_identifier=self.model_name,
             model_revision=revision,
             artifact_identity=artifact_identity,
+            dimension=int(self.model.get_sentence_embedding_dimension()),
         )
 
 

@@ -29,6 +29,7 @@ class FixedVectors:
     model_name = "synthetic-e0-3d-v1"
     model_revision = "synthetic-e0-revision-1"
     artifact_identity = "synthetic-e0-vector-table-v1"
+    dimension = 3
 
     def encode(self, texts):
         vectors = read_json(FIXTURES / "vectors.json")
