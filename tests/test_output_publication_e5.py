@@ -17,7 +17,7 @@ def test_successful_generation_is_authoritative_and_aliases_are_compatibility_on
     publisher = OutputPublisher(reports)
     published = publisher.publish(
         "run-1",
-        {"recommendations.json": render_text('{"schema_version":1}\n'),
+        {"recommendations.json": render_text('{"schema_name":"zotwatch-recommendations","schema_version":1}\n'),
          "feed.xml": render_text("<rss/>"),
          "report.html": render_text("<html></html>")},
     )
@@ -31,7 +31,7 @@ def test_successful_generation_is_authoritative_and_aliases_are_compatibility_on
     for artifact in published.artifacts:
         ArtifactReference.model_validate(artifact.model_dump(mode="json"))
         assert artifact.sha256 and artifact.size_bytes > 0 and artifact.publishable
-    assert (reports / "recommendations.json").read_text() == '{"schema_version":1}\n'
+    assert json.loads((reports / "recommendations.json").read_text())["schema_version"] == 1
 
 
 def test_failed_render_preserves_previous_generation_and_aliases(tmp_path):
