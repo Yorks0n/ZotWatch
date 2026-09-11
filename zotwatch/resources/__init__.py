@@ -13,3 +13,15 @@ def journal_metrics_path(selection: str, workspace: Path):
             yield path
     else:
         yield (workspace / selection).resolve()
+
+
+@contextmanager
+def contract_schema_path(name: str):
+    if name not in {
+        "recommendations-v1.schema.json",
+        "run-manifest-v1.schema.json",
+        "run-result-v1.schema.json",
+    }:
+        raise ValueError("Unknown ZotWatch contract schema")
+    with as_file(files(__package__).joinpath(name)) as path:
+        yield path

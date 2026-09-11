@@ -1,10 +1,13 @@
 import json
 import math
 
+import jsonschema
+
 from src.fetch_new import CandidateFetcher
 from src.models import CandidateWork, RankedWork
 from zotwatch.results.models import RecommendationDocument
 from zotwatch.results.projector import project_recommendations
+from zotwatch.resources import contract_schema_path
 
 
 def ranked_work(**changes):
@@ -20,7 +23,7 @@ def ranked_work(**changes):
         metrics={"cited_by": 7.0, "altmetric": 3.0},
         extra={"public_id": "public-1", "private": "must-not-project"},
         is_preprint=True,
-        score=1.25,
+        score=0.855,
         similarity=0.5,
         recency_score=1.0,
         metric_score=2.0,
@@ -41,6 +44,8 @@ def test_recommendation_v1_has_complete_additive_score_provenance(settings):
         [work], settings.scoring.weights, run_id="run-1", generated_at="2026-01-15T12:00:00Z"
     )
     validated = RecommendationDocument.model_validate(document.model_dump(mode="json"))
+    with contract_schema_path("recommendations-v1.schema.json") as schema_path:
+        jsonschema.validate(validated.model_dump(mode="json"), json.loads(schema_path.read_text()))
     item = validated.recommendations[0]
     assert list(item.score_breakdown) == [
         "similarity", "recency", "citations", "altmetric", "journal_quality",

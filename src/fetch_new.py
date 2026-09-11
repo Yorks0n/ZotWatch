@@ -229,6 +229,7 @@ class CandidateFetcher:
             url=item.get("url"),
             published=_parse_date(item.get("published_at")),
             venue=item.get("venue"),
+            is_preprint=(item.get("is_preprint") if isinstance(item.get("is_preprint"), bool) else None),
             metrics={str(key): float(value) for key, value in metrics.items() if _is_number(value)},
             extra={key: value for key, value in extra.items() if value is not None},
         )
@@ -291,6 +292,7 @@ class CandidateFetcher:
     @staticmethod
     def _serialize_candidate(candidate: CandidateWork) -> dict:
         data = candidate.dict()
+        data["is_preprint"] = candidate.is_preprint
         data["published"] = ensure_isoformat(candidate.published)
         return data
 

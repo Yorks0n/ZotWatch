@@ -174,6 +174,7 @@ class WorkRanker:
                     similarity=similarity,
                     recency_score=recency_score,
                     metric_score=citation_score,
+                    altmetric_score=altmetric_score,
                     author_bonus=author_bonus,
                     venue_bonus=venue_bonus,
                     journal_quality=journal_quality,
