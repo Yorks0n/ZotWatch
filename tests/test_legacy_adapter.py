@@ -77,13 +77,7 @@ def test_validation_cli_is_offline_and_does_not_claim_ai_runtime(tmp_path, capsy
     assert "openrouter" not in output.out
 
 
-def test_public_cli_gates_e5a_json_and_rejects_mixed_modes(tmp_path, workspace, capsys):
-    v2_workspace = tmp_path / "v2-only"
-    v2_workspace.mkdir()
-    write_config(v2_workspace / "zotwatch.yaml", minimal_config())
-    assert public_cli.main(["watch", "--workspace", str(v2_workspace)]) == 3
-    assert "OUTPUT_FORMAT_UNAVAILABLE" in capsys.readouterr().err
-
+def test_public_cli_rejects_mixed_modes(tmp_path, workspace, capsys):
     write_config(workspace / "zotwatch.yaml", minimal_config())
     assert public_cli.main(["profile", "--workspace", str(workspace)]) == 2
     assert "CONFIG_MIXED_MODES" in capsys.readouterr().err

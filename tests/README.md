@@ -30,6 +30,11 @@ PYTHONHASHSEED=0 TZ=UTC OMP_NUM_THREADS=1 /tmp/zotwatch-e0-venv/bin/python -m py
 | [test_runtime_config_e5.py](test_runtime_config_e5.py) | E5A Basic v2 effective settings、engine-owned public connection、legacy runtime isolation |
 | [test_runtime_preflight_e5.py](test_runtime_preflight_e5.py) | E5A output/provider capability、credential presence 与 explicit Zotero verification |
 | [test_runtime_cli_e5a.py](test_runtime_cli_e5a.py) | E5A v2 dispatch、side-effect-free rejection、legacy-only option boundary |
+| [test_recommendation_contract_e5.py](test_recommendation_contract_e5.py) | E5B recommendation JSON v1、七分项 additive score provenance、显式 preprint metadata |
+| [test_run_manifest_e5.py](test_run_manifest_e5.py) | E5B private run manifest、stage finalization、sanitized symbolic errors |
+| [test_candidate_outcome_e5.py](test_candidate_outcome_e5.py) | E5B complete/partial/stale/unavailable candidate acquisition classification |
+| [test_output_publication_e5.py](test_output_publication_e5.py) | E5B immutable generation、authoritative pointer、artifact whitelist、失败保留旧输出 |
+| [test_exit_codes_e5.py](test_exit_codes_e5.py) | E5B machine result、relative artifact references、numeric/symbolic error boundary |
 | [test_candidates.py](test_candidates.py) | 冻结 public v1 分页/映射，来源路由、12 小时 cache、故障回退与 Crossref 补抓 |
 | [test_profile_ranking_outputs.py](test_profile_ranking_outputs.py) | profile、真实 FAISS 保存/读取/检索、排名分项及稳定 tie、labels、recency 边界、SJR、RSS/HTML 完整 golden |
 | [test_pipeline_http.py](test_pipeline_http.py) | CLI profile → watch 的真实本地链路、HTTP 重试/错误、离线防护自检 |

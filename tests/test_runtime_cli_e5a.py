@@ -9,6 +9,7 @@ from src.computational_state import pseudonymous_library_identity
 from src.models import ZoteroItem
 from src.storage import ProfileStorage
 from zotwatch import cli
+from zotwatch.results.models import RunResult
 
 from .helpers import FIXTURES, FixedVectors, read_json
 from .test_config_v2 import minimal_config
@@ -39,30 +40,36 @@ def test_v2_watch_dispatches_existing_pipeline_with_config_values(
     calls = []
     monkeypatch.setattr(
         legacy_cli,
-        "run_watch",
-        lambda base, settings, storage, **kwargs: calls.append((base, settings, kwargs)),
+        "run_watch_recorded",
+        lambda base, settings, storage, **kwargs: (
+            calls.append((base, settings, kwargs))
+            or RunResult(run_id="test-run", status="succeeded", exit_code=0)
+        ),
     )
     assert cli.main(["watch", "--workspace", str(workspace)]) == 0
     assert len(calls) == 1
     base, settings, kwargs = calls[0]
     assert base == workspace
     assert settings.sources.public_api.enabled
-    assert kwargs["rss"] is True
-    assert kwargs["report"] is True
+    assert kwargs["output_formats"] == ("rss", "html")
     assert kwargs["top"] == 20
-    assert kwargs["push"] is False
     assert kwargs["journal_metrics"] == "bundled"
 
 
-def test_json_and_ai_fail_before_pipeline_side_effects(workspace, monkeypatch, capsys):
+def test_json_executes_but_ai_still_fails_before_pipeline_side_effects(workspace, monkeypatch, capsys):
     credentials(monkeypatch)
     called = []
-    monkeypatch.setattr(legacy_cli, "run_watch", lambda *args, **kwargs: called.append(1))
+    monkeypatch.setattr(
+        legacy_cli, "run_watch_recorded",
+        lambda *args, **kwargs: called.append(1) or RunResult(
+            run_id="json-run", status="succeeded", exit_code=0
+        ),
+    )
 
     write_config(workspace, formats=("json",))
-    assert cli.main(["watch", "--workspace", str(workspace)]) == 3
-    assert "OUTPUT_FORMAT_UNAVAILABLE" in capsys.readouterr().err
-    assert called == []
+    assert cli.main(["watch", "--workspace", str(workspace)]) == 0
+    assert called == [1]
+    called.clear()
 
     ai = {
         "services": {"s": {"provider": "openrouter", "model": "some-model"}},
@@ -92,7 +99,7 @@ def test_legacy_and_basic_v2_share_ranking_and_rss_html_content(
 ):
     v2_workspace = workspace / "v2-workspace"
     v2_workspace.mkdir()
-    write_config(v2_workspace)
+    write_config(v2_workspace, formats=("rss", "html", "json"))
     identity = pseudonymous_library_identity("user", "123456")
     legacy_state = workspace / "legacy-state"
     v2_state = workspace / "v2-state"
@@ -113,7 +120,11 @@ def test_legacy_and_basic_v2_share_ranking_and_rss_html_content(
     )
     monkeypatch.setattr(build_profile, "TextVectorizer", FixedVectors)
     monkeypatch.setattr(score_rank, "TextVectorizer", FixedVectors)
-    monkeypatch.setattr(fetch_new.CandidateFetcher, "fetch_all", lambda self: candidates)
+    monkeypatch.setattr(
+        fetch_new.CandidateFetcher,
+        "fetch_with_outcome",
+        lambda self: fetch_new.CandidateFetchOutcome(candidates, "succeeded", False, True),
+    )
     captures = []
     original_rank = score_rank.WorkRanker.rank
 
@@ -145,5 +156,15 @@ def test_legacy_and_basic_v2_share_ranking_and_rss_html_content(
     assert captures[0] == captures[1]
     assert (legacy_reports / "feed.xml").read_bytes() == (v2_reports / "feed.xml").read_bytes()
     assert (legacy_reports / "report-20260114.html").read_bytes() == (
-        v2_reports / "report-20260114.html"
+        v2_reports / "report.html"
     ).read_bytes()
+    recommendations = read_json(v2_reports / "recommendations.json")
+    assert recommendations["schema_name"] == "zotwatch-recommendations"
+    assert recommendations["schema_version"] == 1
+    assert len(recommendations["recommendations"]) == 4
+    pointer = read_json(v2_reports / ".zotwatch-output/latest-success.json")
+    assert pointer["generation_id"]
+    assert all(
+        item["path"].startswith(".zotwatch-output/generations/")
+        for item in pointer["artifacts"]
+    )

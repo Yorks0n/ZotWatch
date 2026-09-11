@@ -42,13 +42,13 @@ def test_basic_rss_html_needs_no_ai_or_public_pool_credential(workspace, monkeyp
     assert "synthetic-zotero-key" not in report.model_dump_json()
 
 
-def test_e5a_json_is_explicitly_unavailable(workspace, monkeypatch):
+def test_e5b_json_is_runtime_supported(workspace, monkeypatch):
     write_config(workspace, minimal_config())
     monkeypatch.setenv("ZOTERO_USER_ID", "12345")
     monkeypatch.setenv("ZOTERO_API_KEY", "synthetic-zotero-key")
     report = preflight(load_effective_runtime(workspace))
-    assert not report.ready
-    assert report.error_code == "OUTPUT_FORMAT_UNAVAILABLE"
+    assert report.ready
+    assert report.error_code is None
 
 
 def test_registered_but_unimplemented_ai_is_not_executable(workspace, monkeypatch):

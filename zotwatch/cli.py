@@ -36,6 +36,8 @@ def _v2_parser() -> argparse.ArgumentParser:
     parser.add_argument("--top", type=int)
     parser.add_argument("--push", action="store_true")
     parser.add_argument("--journal-metrics")
+    parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--machine-result", action="store_true")
     return parser
 
 
@@ -101,6 +103,8 @@ def _run_v2(arguments: list[str]) -> int:
     from src.storage import ProfileStorage
     from zotwatch.paths import RuntimePaths
     from zotwatch.runtime import load_effective_runtime, preflight
+    from zotwatch.results.recorder import RunRecorder
+    from zotwatch.config import ConfigError
 
     args = _v2_parser().parse_args(arguments)
     paths = RuntimePaths.resolve(
@@ -110,46 +114,81 @@ def _run_v2(arguments: list[str]) -> int:
         reports_dir=args.reports_dir,
     )
     load_dotenv(paths.workspace / ".env")
-    effective = load_effective_runtime(paths.workspace)
+    try:
+        effective = load_effective_runtime(paths.workspace)
+    except ConfigError:
+        recorder = RunRecorder(
+            paths.state, args.command, config_schema_version=None,
+            config_fingerprint_sha256=None,
+        )
+        recorder.fail("config_validation", "CONFIG_INVALID")
+        result = recorder.finalize(
+            status="failed", exit_code=2, error_code="CONFIG_INVALID"
+        )
+        return _emit_result(result, machine=args.machine_result)
+    recorder = RunRecorder(
+        paths.state,
+        args.command,
+        config_schema_version=effective.config_schema_version,
+        config_fingerprint_sha256=effective.config_fingerprint_sha256,
+    )
     forbidden = ("--rss", "--report", "--top", "--push", "--journal-metrics")
     if any(_has_option(arguments, option) for option in forbidden):
-        print(
-            "CONFIG_OPTION_UNSUPPORTED: Basic v2 runtime options come from zotwatch.yaml",
-            file=sys.stderr,
+        recorder.fail("config_validation", "CONFIG_OPTION_UNSUPPORTED")
+        result = recorder.finalize(
+            status="failed", exit_code=2, error_code="CONFIG_OPTION_UNSUPPORTED"
         )
-        return 2
+        return _emit_result(result, machine=args.machine_result)
+    recorder.start("config_validation")
+    recorder.finish("config_validation")
+    recorder.start("credential_preflight")
     report = preflight(effective)
     if not report.ready:
-        print(f"{report.error_code}: runtime preflight failed", file=sys.stderr)
-        return 3
-
+        recorder.fail("credential_preflight", report.error_code)
+        result = recorder.finalize(
+            status="failed", exit_code=3, error_code=report.error_code
+        )
+        return _emit_result(result, machine=args.machine_result)
+    recorder.finish("credential_preflight")
     setup_logging(verbose=args.verbose)
     storage = ProfileStorage(paths.state / "profile.sqlite")
     try:
         if args.command == "profile":
-            engine_cli.run_profile(
+            result = engine_cli.run_profile_recorded(
                 paths.workspace,
                 effective.settings,
                 storage,
                 full=args.full or args.weekly,
                 state_dir=paths.state,
+                recorder=recorder,
             )
         else:
-            engine_cli.run_watch(
+            result = engine_cli.run_watch_recorded(
                 paths.workspace,
                 effective.settings,
                 storage,
-                rss="rss" in effective.output_formats,
-                report="html" in effective.output_formats,
+                output_formats=effective.output_formats,
                 top=effective.top_n,
-                push=False,
+                max_preprint_ratio=effective.max_preprint_ratio,
                 state_dir=paths.state,
                 reports_dir=paths.reports,
                 journal_metrics=effective.journal_metrics,
+                strict=args.strict,
+                recorder=recorder,
             )
     finally:
         storage.close()
-    return 0
+    return _emit_result(result, machine=args.machine_result)
+
+
+def _emit_result(result, *, machine: bool) -> int:
+    if machine:
+        print(result.model_dump_json())
+    elif result.status == "failed":
+        print(f"{result.error.code}: {result.error.message}", file=sys.stderr)
+    else:
+        print(f"Run {result.run_id} {result.status}.")
+    return result.exit_code
 
 
 def main(argv=None):

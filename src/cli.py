@@ -34,6 +34,178 @@ from .settings import Settings, load_settings
 from .storage import ProfileStorage
 from .report_html import render_html
 
+
+def run_profile_recorded(
+    base_dir: Path,
+    settings: Settings,
+    storage: ProfileStorage,
+    *,
+    full: bool,
+    state_dir: Path,
+    recorder,
+):
+    state_root = Path(state_dir)
+    coordinator = StateCoordinator(state_root)
+    manager = StateManager(state_root, coordinator=coordinator)
+    vectorizer = build_profile_module.TextVectorizer()
+    with coordinator.acquire() as lease:
+        try:
+            recorder.start("zotero_sync")
+            ZoteroIngestor(storage, settings).run(
+                full=full, library_identity_sha256=_library_identity(settings), lease=lease
+            )
+            recorder.finish("zotero_sync")
+        except Exception:
+            recorder.fail("zotero_sync", "ZOTERO_SYNC_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="ZOTERO_SYNC_FAILED")
+        try:
+            recorder.start("computational_state")
+            handle, _ = _ensure_computational_state(
+                base_dir, settings, storage, state_root=state_root, manager=manager,
+                vectorizer=vectorizer, lease=lease, force=full,
+            )
+            recorder.finish("computational_state")
+        except Exception:
+            recorder.fail("computational_state", "STATE_BUILD_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="STATE_BUILD_FAILED")
+    return recorder.finalize(
+        status="succeeded", exit_code=0, state_generation_id=handle.generation_id
+    )
+
+
+def run_watch_recorded(
+    base_dir: Path,
+    settings: Settings,
+    storage: ProfileStorage,
+    *,
+    state_dir: Path,
+    reports_dir: Path,
+    output_formats: tuple[str, ...],
+    top: int,
+    max_preprint_ratio: float,
+    journal_metrics: str,
+    strict: bool,
+    recorder,
+):
+    from zotwatch.results.projector import project_recommendations
+    from zotwatch.results.publication import OutputPublisher, PublicationError
+
+    state_root = Path(state_dir)
+    coordinator = StateCoordinator(state_root)
+    manager = StateManager(state_root, coordinator=coordinator)
+    vectorizer = build_profile_module.TextVectorizer()
+    with coordinator.acquire() as lease:
+        try:
+            recorder.start("zotero_sync")
+            ZoteroIngestor(storage, settings).run(
+                full=False, library_identity_sha256=_library_identity(settings), lease=lease
+            )
+            recorder.finish("zotero_sync")
+        except Exception:
+            recorder.fail("zotero_sync", "ZOTERO_SYNC_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="ZOTERO_SYNC_FAILED")
+        try:
+            recorder.start("computational_state")
+            state_handle, _ = _ensure_computational_state(
+                base_dir, settings, storage, state_root=state_root, manager=manager,
+                vectorizer=vectorizer, lease=lease, force=False,
+            )
+            recorder.finish("computational_state")
+        except Exception:
+            recorder.fail("computational_state", "STATE_BUILD_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="STATE_BUILD_FAILED")
+        try:
+            recorder.start("candidate_fetch")
+            outcome = CandidateFetcher(
+                settings, base_dir, profile_summary=state_handle.profile, state_dir=state_root
+            ).fetch_with_outcome()
+            if outcome.status == "failed":
+                recorder.fail("candidate_fetch", "CANDIDATE_UNAVAILABLE")
+                return recorder.finalize(
+                    status="failed", exit_code=4, error_code="CANDIDATE_UNAVAILABLE",
+                    state_generation_id=state_handle.generation_id,
+                )
+            degraded = outcome.status == "degraded"
+            if degraded:
+                code = "CANDIDATE_STALE_CACHE" if outcome.used_cache else "CANDIDATE_PARTIAL"
+                recorder.degrade("candidate_fetch", code, count=len(outcome.candidates))
+            else:
+                recorder.finish("candidate_fetch", count=len(outcome.candidates))
+        except Exception:
+            recorder.fail("candidate_fetch", "CANDIDATE_UNAVAILABLE")
+            return recorder.finalize(
+                status="failed", exit_code=4, error_code="CANDIDATE_UNAVAILABLE",
+                state_generation_id=state_handle.generation_id,
+            )
+        try:
+            recorder.start("dedupe")
+            filtered = DedupeEngine(storage).filter(outcome.candidates)
+            recorder.finish("dedupe", count=len(filtered))
+        except Exception:
+            recorder.fail("dedupe", "DEDUPE_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="DEDUPE_FAILED", state_generation_id=state_handle.generation_id)
+        try:
+            recorder.start("ranking")
+            with journal_metrics_path(journal_metrics, base_dir) as metrics_path:
+                options = {"state_dir": state_root, "state_handle": state_handle}
+                if metrics_path is not None:
+                    options["metrics_path"] = metrics_path
+                ranked = WorkRanker(base_dir, settings, vectorizer, **options).rank(filtered)
+            ranked = _filter_recent(ranked, days=7)
+            ranked = _limit_preprints(ranked, max_ratio=max_preprint_ratio)
+            if top and len(ranked) > top:
+                ranked = ranked[:top]
+            recorder.finish("ranking", count=len(ranked))
+        except Exception:
+            recorder.fail("ranking", "RANKING_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="RANKING_FAILED", state_generation_id=state_handle.generation_id)
+
+    if degraded and strict:
+        return recorder.finalize(
+            status="degraded", exit_code=5, state_generation_id=state_handle.generation_id
+        )
+    recorder.start("output_render")
+    try:
+        recommendation = project_recommendations(
+            ranked, settings.scoring.weights, run_id=recorder.run_id,
+            generated_at=recorder.generated_at,
+        )
+    except Exception:
+        recorder.fail("output_render", "OUTPUT_CONTRACT_INVALID")
+        return recorder.finalize(
+            status="failed", exit_code=4, error_code="OUTPUT_CONTRACT_INVALID",
+            state_generation_id=state_handle.generation_id,
+        )
+    renderers = {}
+    if "json" in output_formats:
+        renderers["recommendations.json"] = lambda path: path.write_text(
+            recommendation.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
+    if "rss" in output_formats:
+        renderers["feed.xml"] = lambda path: write_rss(ranked, path)
+    if "html" in output_formats:
+        renderers["report.html"] = lambda path: render_html(ranked, path)
+    recorder.finish("zotero_writeback")
+    try:
+        published = OutputPublisher(reports_dir).publish(recorder.run_id, renderers)
+        recorder.finish("output_render", count=len(published.artifacts))
+        recorder.start("output_publish")
+        recorder.finish("output_publish", count=len(published.artifacts))
+    except PublicationError as exc:
+        code = exc.code
+        stage = "output_publish" if code == "OUTPUT_PUBLISH_FAILED" else "output_render"
+        recorder.fail(stage, code)
+        return recorder.finalize(status="failed", exit_code=4, error_code=code, state_generation_id=state_handle.generation_id)
+    except Exception:
+        recorder.fail("output_publish", "OUTPUT_PUBLISH_FAILED")
+        return recorder.finalize(status="failed", exit_code=4, error_code="OUTPUT_PUBLISH_FAILED", state_generation_id=state_handle.generation_id)
+    return recorder.finalize(
+        status="degraded" if degraded else "succeeded", exit_code=0,
+        state_generation_id=state_handle.generation_id,
+        output_generation_id=published.generation_id,
+        artifacts=published.artifacts,
+    )
+
 def main(argv: Optional[list[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="ZotWatcher CLI")
     parser.add_argument("command", choices=["profile", "watch"], help="Command to run")

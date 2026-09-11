@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zotwatch.dev/contracts/recommendations-v1.schema.json",
+  "title": "ZotWatch Recommendations v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "run_id", "generated_at", "recommendations"],
+  "properties": {
+    "schema_name": {"const": "zotwatch-recommendations"},
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "generated_at": {"type": "string"},
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["rank", "work_key", "public_id", "source", "identifier", "title", "abstract", "authors", "doi", "url", "published", "venue", "is_preprint", "label", "score", "score_breakdown"],
+        "properties": {
+          "rank": {"type": "integer", "minimum": 1},
+          "work_key": {"type": "string"},
+          "public_id": {"type": ["string", "null"]},
+          "source": {"type": "string"},
+          "identifier": {"type": "string"},
+          "title": {"type": "string"},
+          "abstract": {"type": ["string", "null"]},
+          "authors": {"type": "array", "items": {"type": "string"}},
+          "doi": {"type": ["string", "null"]},
+          "url": {"type": ["string", "null"]},
+          "published": {"type": ["string", "null"]},
+          "venue": {"type": ["string", "null"]},
+          "is_preprint": {"type": ["boolean", "null"]},
+          "label": {"enum": ["must_read", "consider", "ignore"]},
+          "score": {"type": "number"},
+          "score_breakdown": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["similarity", "recency", "citations", "altmetric", "journal_quality", "author_bonus", "venue_bonus"],
+            "properties": {
+              "similarity": {"$ref": "#/$defs/component"},
+              "recency": {"$ref": "#/$defs/component"},
+              "citations": {"$ref": "#/$defs/component"},
+              "altmetric": {"$ref": "#/$defs/component"},
+              "journal_quality": {"$ref": "#/$defs/component"},
+              "author_bonus": {"$ref": "#/$defs/component"},
+              "venue_bonus": {"$ref": "#/$defs/component"}
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["raw_value", "weighted_contribution", "input_available"],
+      "properties": {
+        "raw_value": {"type": ["number", "null"]},
+        "weighted_contribution": {"type": "number"},
+        "input_available": {"type": "boolean"}
+      }
+    }
+  }
+}

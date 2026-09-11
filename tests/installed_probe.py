@@ -120,7 +120,7 @@ ai:
     rerank: {enabled: false}
     summary: {enabled: false}
 outputs:
-  formats: [rss, html]
+  formats: [rss, html, json]
   publish: false
 """)
 ingest_zotero_api.ZoteroIngestor.run = lambda *a, **kw: SimpleNamespace(
@@ -135,7 +135,10 @@ v2_common = [
 assert public_main(["profile", *v2_common]) == 0
 assert public_main(["watch", *v2_common]) == 0
 assert (v2_reports / "feed.xml").read_bytes() == (reports / "feed.xml").read_bytes()
-assert (v2_reports / "report-20260114.html").is_file()
+assert (v2_reports / "report.html").is_file()
+assert json.loads((v2_reports / "recommendations.json").read_text())["schema_version"] == 1
+output_pointer = json.loads((v2_reports / ".zotwatch-output/latest-success.json").read_text())
+assert all(item["path"].startswith(".zotwatch-output/generations/") for item in output_pointer["artifacts"])
 print(json.dumps({
     "cli_module": cli.__file__,
     "state": str(state),
@@ -143,5 +146,6 @@ print(json.dumps({
     "profile": str(generation / "profile.json"),
     "manifest": str(generation / "state-manifest.json"),
     "v2_feed": str(v2_reports / "feed.xml"),
-    "v2_report": str(v2_reports / "report-20260114.html"),
+    "v2_report": str(v2_reports / "report.html"),
+    "v2_json": str(v2_reports / "recommendations.json"),
 }))
