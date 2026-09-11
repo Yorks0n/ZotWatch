@@ -31,8 +31,7 @@ def test_client_paging_and_304(settings, monkeypatch):
     assert list(client.iter_items(10)) == []
 
 
-def test_bug_content_update_still_preserves_embedding(library, settings, monkeypatch):
-    # BUG-I4 remains outside E3: source changes do not invalidate embeddings.
+def test_e4_content_update_invalidates_legacy_embedding(library, settings, monkeypatch):
     library.set_last_modified_version(10)
     library.set_embedding("LIB1", b"old-embedding")
     rows = read_json(FIXTURES / "zotero.json")
@@ -49,7 +48,7 @@ def test_bug_content_update_still_preserves_embedding(library, settings, monkeyp
     assert (stats.fetched, stats.updated, stats.removed) == (1, 1, 0)
     assert library.last_modified_version() == 20
     assert next(library.iter_items()).title == "Updated genome"
-    assert library.fetch_all_embeddings() == [("LIB1", b"old-embedding")]
+    assert library.fetch_all_embeddings() == []
 
 
 def test_e3_full_sync_removes_absent_rows(library, settings, monkeypatch):
@@ -100,7 +99,11 @@ def test_item_mapping_and_unchanged_upsert_count(library, settings, monkeypatch)
     assert item.year == 2020
     runner = ingest.ZoteroIngestor(library, settings)
     monkeypatch.setattr(runner.client, "iter_items", lambda **kw: iter([Response(rows, headers={"Last-Modified-Version": "10"})]))
-    monkeypatch.setattr(runner.client, "fetch_deleted", lambda **kw: [])
+    monkeypatch.setattr(
+        runner.client,
+        "fetch_deleted",
+        lambda *a, **kw: Response({"items": []}, headers={"Last-Modified-Version": "10"}),
+    )
     stats = runner.run()
     assert stats.updated == stats.fetched == 2  # Includes unchanged records.
 

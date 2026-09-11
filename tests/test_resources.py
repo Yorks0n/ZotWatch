@@ -29,10 +29,14 @@ def test_external_state_does_not_change_legacy_metrics_location(workspace, libra
     state = workspace / "external-state"
     ProfileBuilder(workspace, library, settings, FixedVectors(), state_dir=state).run()
     (state / "journal_metrics.csv").write_text("title,sjr\nWrong location,99\n")
-    ranker = WorkRanker(workspace, settings, FixedVectors(), state_dir=state)
+    ranker = WorkRanker(
+        workspace, settings, FixedVectors(), state_dir=state, storage=library
+    )
     assert ranker.journal_metrics == {}  # Missing legacy CSV must not enable bundled SJR.
     (workspace / "data/journal_metrics.csv").write_text("title,sjr\nLegacy,3\n")
-    ranker = WorkRanker(workspace, settings, FixedVectors(), state_dir=state)
+    ranker = WorkRanker(
+        workspace, settings, FixedVectors(), state_dir=state, storage=library
+    )
     assert ranker.journal_metrics == {"legacy": 3}
 
 

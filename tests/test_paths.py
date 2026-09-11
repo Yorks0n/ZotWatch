@@ -71,7 +71,13 @@ def test_real_pipeline_uses_separate_state_and_reports(workspace, candidates, mo
     common = ["--workspace", str(workspace), "--state-dir", state_arg]
     cli.main(["profile", "--full", *common])
     cli.main(["watch", "--rss", "--report", "--top", "3", "--reports-dir", reports_arg, *common])
-    assert {p.name for p in state.iterdir()} == {"profile.sqlite", "profile.json", "faiss.index", "cache"}
+    assert {p.name for p in state.iterdir()} == {
+        ".zotwatch-state.lock",
+        "profile.sqlite",
+        "computational",
+        "cache",
+    }
+    assert (state / "computational/current.json").is_file()
     assert (state / "cache/candidate_cache.json").exists()
     assert {p.name for p in reports.iterdir()} == {"feed.xml", "report-20260114.html"}
     assert [node.text for node in ET.parse(reports / "feed.xml").findall("channel/item/guid")] == ["alpha", "beta", "gamma"]

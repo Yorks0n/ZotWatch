@@ -23,7 +23,14 @@ ARXIV_MAX_RESULTS = 50
 
 
 class CandidateFetcher:
-    def __init__(self, settings: Settings, base_dir: Path, *, state_dir: Path | None = None):
+    def __init__(
+        self,
+        settings: Settings,
+        base_dir: Path,
+        *,
+        state_dir: Path | None = None,
+        profile_summary: dict | None = None,
+    ):
         self.settings = settings
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "ZotWatcher/0.1 (https://github.com/Yorks0n/ZotWatch)"})
@@ -32,6 +39,7 @@ class CandidateFetcher:
         self.cache_path = self.state_dir / "cache" / "candidate_cache.json"
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
         self.profile_path = self.state_dir / "profile.json"
+        self.profile_summary = profile_summary
         self.top_venues = self._load_top_venues()
 
     def fetch_all(self) -> List[CandidateWork]:
@@ -226,13 +234,15 @@ class CandidateFetcher:
         )
 
     def _load_top_venues(self) -> List[str]:
-        if not self.profile_path.exists():
-            return []
-        try:
-            data = json.loads(self.profile_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.warning("Failed to load profile when reading top venues: %s", exc)
-            return []
+        data = self.profile_summary
+        if data is None:
+            if not self.profile_path.exists():
+                return []
+            try:
+                data = json.loads(self.profile_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.warning("Failed to load profile when reading top venues: %s", exc)
+                return []
         venues: List[str] = []
         for entry in data.get("top_venues", []):
             name = entry.get("venue") if isinstance(entry, dict) else None

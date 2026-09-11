@@ -1,10 +1,13 @@
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import ANY
+from contextlib import contextmanager
 
 import pytest
 
 from src import cli
 from src.build_profile import ProfileBuilder
+from src.computational_state import StateCoordinator
 from src.models import ZoteroItem
 from src.score_rank import WorkRanker
 from .helpers import FixedVectors
@@ -52,6 +55,22 @@ def test_ranker_rejects_generation_from_another_model(workspace, library, settin
 
 def test_watch_ensures_state_after_sync(workspace, settings, storage, monkeypatch):
     events = []
+    coordinator = StateCoordinator(workspace / "data")
+    acquisitions = 0
+    acquire = coordinator.acquire
+
+    @contextmanager
+    def counted_acquire():
+        nonlocal acquisitions
+        acquisitions += 1
+        with acquire() as lease:
+            yield lease
+
+    monkeypatch.setattr(coordinator, "acquire", counted_acquire)
+    monkeypatch.setattr(cli, "StateCoordinator", lambda *a, **kw: coordinator)
+    storage.upsert_item(ZoteroItem(key="K1", version=1, title="Genome atlas"), "content")
+    storage.set_library_identity_sha256(cli._library_identity(settings))
+    storage.set_last_modified_version(10)
     monkeypatch.setattr(
         cli,
         "ZoteroIngestor",
@@ -60,22 +79,22 @@ def test_watch_ensures_state_after_sync(workspace, settings, storage, monkeypatc
             or SimpleNamespace(committed_revision=10)
         ),
     )
-    monkeypatch.setattr(
-        cli,
-        "ProfileBuilder",
-        lambda *a, **kw: SimpleNamespace(
-            run=lambda: events.append(("profile", {}))
-            or SimpleNamespace(
-                sqlite_path=str(storage.path),
-                faiss_path=str(workspace / "data/faiss.index"),
-                profile_json_path=str(workspace / "data/profile.json"),
-            )
-        ),
-    )
+    monkeypatch.setattr(cli.build_profile_module, "TextVectorizer", FixedVectors)
     monkeypatch.setattr(cli, "CandidateFetcher", lambda *a, **kw: SimpleNamespace(fetch_all=list))
     monkeypatch.setattr(cli, "DedupeEngine", lambda *a: SimpleNamespace(filter=lambda works: works))
     monkeypatch.setattr(cli, "WorkRanker", lambda *a, **kw: SimpleNamespace(rank=lambda works: works))
 
     cli.run_watch(workspace, settings, storage, rss=False, report=False, top=10, push=False)
 
-    assert events == [("sync", {"full": False}), ("profile", {})]
+    assert events == [
+        (
+            "sync",
+            {
+                "full": False,
+                "library_identity_sha256": cli._library_identity(settings),
+                "lease": ANY,
+            },
+        )
+    ]
+    assert (workspace / "data/computational/current.json").is_file()
+    assert acquisitions == 1

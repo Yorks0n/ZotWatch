@@ -63,6 +63,10 @@ class StateLease:
         if not self._active or self._owner is not coordinator:
             raise RuntimeError("State lease is inactive or belongs to another coordinator")
 
+    def validate_for(self, state_dir: Path | str) -> None:
+        if not self._active or self.state_dir != Path(state_dir).resolve():
+            raise RuntimeError("State lease is inactive or belongs to another state directory")
+
 
 class StateCoordinator:
     """Own the one non-reentrant cross-process lease for an official run."""

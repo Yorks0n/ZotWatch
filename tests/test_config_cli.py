@@ -92,21 +92,28 @@ def test_seven_day_boundary():
 
 
 @pytest.mark.parametrize("empty", [False, True])
-def test_bug_watch_does_not_rebuild_and_keeps_ignore(workspace, settings, storage, monkeypatch, empty):
+def test_watch_ensures_state_and_keeps_legacy_filters(workspace, settings, storage, monkeypatch, empty):
     events = []
     items = [] if empty else [ranked("first", published=NOW-timedelta(days=2)), ranked("second"),
                               ranked("old", published=NOW-timedelta(days=8))]
     settings.sources.window_days = 30  # CLI still uses hard-coded seven days.
-    monkeypatch.setattr(cli, "ZoteroIngestor", lambda *a: SimpleNamespace(run=lambda **kw: events.append(("ingest", kw))))
-    monkeypatch.setattr(cli, "CandidateFetcher", lambda *a: SimpleNamespace(fetch_all=lambda: items))
+    monkeypatch.setattr(
+        cli,
+        "ZoteroIngestor",
+        lambda *a: SimpleNamespace(run=lambda **kw: events.append(("ingest", kw["full"]))),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_ensure_computational_state",
+        lambda *a, **kw: events.append(("ensure", kw["force"]))
+        or (SimpleNamespace(profile={}, generation_id="synthetic"), None),
+    )
+    monkeypatch.setattr(cli, "CandidateFetcher", lambda *a, **kw: SimpleNamespace(fetch_all=lambda: items))
     monkeypatch.setattr(cli, "DedupeEngine", lambda *a: SimpleNamespace(filter=lambda works: works))
-    monkeypatch.setattr(cli, "WorkRanker", lambda *a: SimpleNamespace(rank=lambda works: works))
-    def forbidden_builder(*a, **kw):
-        pytest.fail("1.x watch unexpectedly rebuilt profile")
-    monkeypatch.setattr(cli, "ProfileBuilder", forbidden_builder)
+    monkeypatch.setattr(cli, "WorkRanker", lambda *a, **kw: SimpleNamespace(rank=lambda works: works))
     monkeypatch.setattr(cli, "ZoteroPusher", lambda *a: SimpleNamespace(push=lambda works: events.append(("push", ids(works)))))
     cli.run_watch(workspace, settings, storage, rss=True, report=True, top=1, push=True)
-    assert events == [("ingest", {"full": False})] + ([] if empty else [("push", ["first"])])
+    assert events == [("ingest", False), ("ensure", False)] + ([] if empty else [("push", ["first"])])
     filename = "report-empty.html" if empty else "report-20260113.html"
     text = (workspace / "reports" / filename).read_text()
     if not empty:

@@ -1,6 +1,7 @@
 import json
 import shutil
 from datetime import timedelta
+from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import numpy as np
@@ -26,7 +27,7 @@ def build_and_rank(workspace, library, settings, candidates):
 
 def test_profile_and_rank_golden(workspace, library, settings, candidates):
     artifacts, ranked = build_and_rank(workspace, library, settings, candidates)
-    assert_json(read_json(workspace / "data/profile.json"), read_json(GOLDENS / "profile.json"))
+    assert_json(read_json(Path(artifacts.profile_json_path)), read_json(GOLDENS / "profile.json"))
     assert_json([work.model_dump(mode="json") for work in ranked], read_json(GOLDENS / "ranking.json"))
     assert ids(ranked).index("gamma") < ids(ranked).index("delta")  # Stable tie.
     assert {work.label for work in ranked} == {"must_read", "consider", "ignore"}
