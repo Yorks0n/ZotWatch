@@ -123,6 +123,20 @@ def test_published_generation_loads_only_when_expectation_matches(workspace, lib
         )
 
 
+def test_engine_patch_version_is_audit_metadata_not_hard_identity(
+    workspace, library, settings, monkeypatch
+):
+    from src import computational_state as state_module
+
+    vectorizer = FixedVectors()
+    ProfileBuilder(workspace, library, settings, vectorizer).run()
+    monkeypatch.setattr(state_module, "installed_engine_version", lambda: "99.0.0")
+    handle = StateManager(workspace / "data").load_current(
+        current_expectation(library, vectorizer)
+    )
+    assert handle.manifest.engine.version != "99.0.0"
+
+
 @pytest.mark.parametrize("artifact", ["profile_path", "embeddings_path", "index_path", "manifest_path"])
 def test_missing_generation_artifact_is_corrupt(workspace, library, settings, artifact):
     vectorizer = FixedVectors()

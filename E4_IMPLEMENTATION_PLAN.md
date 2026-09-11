@@ -2,7 +2,7 @@
 
 日期：2026-09-11
 
-状态：**plan only；等待审阅，尚未修改 production code。**
+状态：**implementation complete on `codex/v2-e4`；本地 gates 已通过，等待远端 CI 与 PR 审阅。**
 
 起点：`v2-e3-baseline` / `8ceec503f81f701ead156c5695b3d115b1cac537`。
 
