@@ -511,6 +511,7 @@ class CandidateFetcher:
                     url=entry.get("link"),
                     published=published,
                     venue="arXiv",
+                    is_preprint=True,
                     extra={"primary_category": entry.get("arxiv_primary_category", {}).get("term")},
                 )
             )
@@ -551,6 +552,7 @@ class CandidateFetcher:
                     url=rel_link,
                     published=_parse_date(entry.get("date")),
                     venue=base,
+                    is_preprint=True,
                     extra={"category": entry.get("category"), "version": entry.get("version")},
                 )
             )

@@ -53,9 +53,7 @@ def preflight(
     verification: Literal["not_requested", "verified", "failed", "unsupported"] = "not_requested"
 
     error_code = None
-    if "json" in config.output_formats:
-        error_code = "OUTPUT_FORMAT_UNAVAILABLE"
-    elif any(route.adapter_status is not AdapterStatus.IMPLEMENTED for route in config.feature_routes):
+    if any(route.adapter_status is not AdapterStatus.IMPLEMENTED for route in config.feature_routes):
         error_code = "CAPABILITY_UNAVAILABLE"
     elif not identity_present or not key_present:
         error_code = "CREDENTIAL_MISSING"

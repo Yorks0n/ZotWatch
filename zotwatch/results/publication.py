@@ -23,6 +23,10 @@ _ALLOWED = {
 class PublicationError(RuntimeError):
     """Sanitized output render/publication boundary error."""
 
+    def __init__(self, message: str, code: str = "OUTPUT_PUBLISH_FAILED"):
+        super().__init__(message)
+        self.code = code
+
 
 @dataclass(frozen=True)
 class PublishedGeneration:
@@ -41,13 +45,14 @@ class OutputPublisher:
         renderers: dict[str, Callable[[Path], object]],
     ) -> PublishedGeneration:
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
-            raise PublicationError("Invalid output generation identifier")
+            raise PublicationError("Invalid output generation identifier", "OUTPUT_CONTRACT_INVALID")
         if not renderers or any(name not in _ALLOWED for name in renderers):
-            raise PublicationError("Output artifact is not in the publication allowlist")
+            raise PublicationError("Output artifact is not in the publication allowlist", "OUTPUT_CONTRACT_INVALID")
         staging = self.internal / "staging" / f"{run_id}.tmp"
         generation = self.internal / "generations" / run_id
         if generation.exists():
             raise PublicationError("Output generation already exists")
+        phase = "render"
         try:
             if staging.exists():
                 shutil.rmtree(staging)
@@ -57,6 +62,7 @@ class OutputPublisher:
                 renderer(target)
                 self._validate(name, target)
             artifacts = tuple(self._reference(run_id, name, staging / name) for name in renderers)
+            phase = "publish"
             generation.parent.mkdir(parents=True, exist_ok=True)
             os.replace(staging, generation)
             pointer = {
@@ -78,17 +84,18 @@ class OutputPublisher:
         except Exception as exc:
             if staging.exists():
                 shutil.rmtree(staging, ignore_errors=True)
-            raise PublicationError("Output generation could not be rendered or published") from exc
+            code = "OUTPUT_RENDER_FAILED" if phase == "render" else "OUTPUT_PUBLISH_FAILED"
+            raise PublicationError("Output generation could not be rendered or published", code) from exc
 
     @staticmethod
     def _validate(name: str, path: Path) -> None:
         if not path.is_file():
-            raise PublicationError("Output renderer did not create its artifact")
+            raise PublicationError("Output renderer did not create its artifact", "OUTPUT_RENDER_FAILED")
         try:
             if name == "recommendations.json":
                 payload = json.loads(path.read_text(encoding="utf-8"))
                 if payload.get("schema_name") != "zotwatch-recommendations" or payload.get("schema_version") != 1:
-                    raise PublicationError("Recommendation output contract is invalid")
+                    raise PublicationError("Recommendation output contract is invalid", "OUTPUT_CONTRACT_INVALID")
             elif name == "feed.xml":
                 ElementTree.parse(path)
             else:
@@ -96,7 +103,7 @@ class OutputPublisher:
         except PublicationError:
             raise
         except Exception as exc:
-            raise PublicationError("Rendered output is invalid") from exc
+            raise PublicationError("Rendered output is invalid", "OUTPUT_CONTRACT_INVALID") from exc
 
     @staticmethod
     def _reference(run_id: str, name: str, path: Path) -> ArtifactReference:

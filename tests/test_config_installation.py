@@ -35,6 +35,8 @@ def test_wheel_and_sdist_include_e2_engine_resources():
         assert "zotwatch/providers/registry.py" in names
         assert "zotwatch/runtime/config.py" in names
         assert "zotwatch/runtime/preflight.py" in names
+        assert "zotwatch/results/publication.py" in names
+        assert "zotwatch/resources/recommendations-v1.schema.json" in names
     with tarfile.open(next(dist.glob("*.tar.gz"))) as archive:
         names = archive.getnames()
         assert any(name.endswith("zotwatch/resources/config-v2.schema.json") for name in names)
@@ -53,7 +55,7 @@ def test_installed_validate_works_outside_checkout(kind, fixture, tmp_path):
 
 
 @pytest.mark.parametrize("kind", ["WHEEL", "EDITABLE"])
-def test_installed_rejects_secret_fields_and_unavailable_json(kind, tmp_path):
+def test_installed_rejects_secret_fields_and_accepts_json_capability(kind, tmp_path):
     python = configured(f"E1_{kind}_PYTHON")
     invalid = _v2_workspace(tmp_path, "invalid-secret.yaml")
     result = run(
@@ -67,7 +69,8 @@ def test_installed_rejects_secret_fields_and_unavailable_json(kind, tmp_path):
 
     valid = _v2_workspace(tmp_path, "minimal.yaml")
     result = run(
-        [python.parent / "zotwatch", "watch", "--workspace", valid], valid, success=False
+        [python.parent / "zotwatch", "runtime", "preflight", "--workspace", valid],
+        valid, success=False,
     )
     assert result.returncode == 3
-    assert "OUTPUT_FORMAT_UNAVAILABLE" in result.stderr
+    assert "CREDENTIAL_MISSING" in result.stderr
