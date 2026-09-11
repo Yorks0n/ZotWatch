@@ -31,7 +31,7 @@ Repository = "https://github.com/Yorks0n/ZotWatch"
 zotwatch = "zotwatch.cli:main"
 
 [tool.setuptools]
-packages = ["src", "zotwatch", "zotwatch.config", "zotwatch.providers", "zotwatch.resources"]
+packages = ["src", "zotwatch", "zotwatch.config", "zotwatch.providers", "zotwatch.resources", "zotwatch.runtime"]
 include-package-data = false
 
 [tool.setuptools.package-data]

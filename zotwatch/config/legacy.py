@@ -9,7 +9,7 @@ from .models import ZotWatchConfigV2
 from .semantic import resolve_feature_routes
 
 
-_LEGACY_SCORING_POLICY = {
+LEGACY_V1_SCORING_POLICY = {
     "weights": {
         "similarity": 0.45,
         "recency": 0.15,
@@ -90,7 +90,7 @@ def project_legacy_to_v2(settings: Settings, *, top_n: int = 20) -> LegacyMappin
         issues.append(
             _issue("/sources/altmetric/enabled", "LEGACY_MAPPING_LOSS", "Altmetric is legacy-only")
         )
-    if settings.scoring.model_dump() != _LEGACY_SCORING_POLICY:
+    if settings.scoring.model_dump() != LEGACY_V1_SCORING_POLICY:
         issues.append(
             _issue("/scoring", "LEGACY_MAPPING_LOSS", "custom legacy scoring cannot be projected losslessly")
         )
@@ -163,5 +163,6 @@ __all__ = [
     "LegacyLoadResult",
     "LegacyMappingIssue",
     "LegacyMappingReport",
+    "LEGACY_V1_SCORING_POLICY",
     "project_legacy_to_v2",
 ]
