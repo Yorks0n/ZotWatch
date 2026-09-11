@@ -1,4 +1,5 @@
 from copy import deepcopy
+import shutil
 
 import yaml
 
@@ -9,6 +10,7 @@ from .test_config_v2 import minimal_config
 
 
 def write_v2(workspace, *, formats=("rss", "html")):
+    shutil.rmtree(workspace / "config")
     data = deepcopy(minimal_config())
     data["outputs"]["formats"] = list(formats)
     (workspace / "zotwatch.yaml").write_text(
@@ -55,4 +57,3 @@ def test_legacy_runtime_uses_original_settings_not_projection(workspace, setting
     assert effective.source is ConfigSource.LEGACY
     assert effective.settings.model_dump() == settings.model_dump()
     assert effective.config_schema_version is None
-
