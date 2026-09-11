@@ -8,6 +8,7 @@ from typing import Dict, Iterable, Optional, Set
 
 import requests
 
+from .computational_state import StateLease
 from .http_utils import request_with_retry
 from .models import ZoteroItem
 from .settings import Settings
@@ -240,8 +241,19 @@ class ZoteroIngestor:
         self.settings = settings
         self.client = ZoteroClient(settings)
 
-    def run(self, *, full: bool = False) -> IngestStats:
+    def run(
+        self,
+        *,
+        full: bool = False,
+        library_identity_sha256: str | None = None,
+        lease: StateLease | None = None,
+    ) -> IngestStats:
+        if lease is not None:
+            lease.validate_for(self.storage.path.parent)
         self.storage.initialize()
+        stored_identity = self.storage.library_identity_sha256()
+        if library_identity_sha256 is not None and stored_identity != library_identity_sha256:
+            full = True
         start_revision = self._read_start_revision(full=full)
         snapshot_mode = full or start_revision is None
         logger.info(
@@ -279,6 +291,7 @@ class ZoteroIngestor:
             removal_keys,
             full=result.full,
             revision=result.target_revision,
+            library_identity_sha256=library_identity_sha256,
         )
 
         stats.removed = apply_result.removed if result.full else len(removal_keys)

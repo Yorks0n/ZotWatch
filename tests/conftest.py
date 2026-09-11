@@ -79,6 +79,8 @@ def storage(workspace):
 def library(storage):
     for row in read_json(FIXTURES / "zotero.json"):
         storage.upsert_item(ZoteroItem.from_zotero_api(row), content_hash="synthetic-initial-hash")
+    storage.set_library_identity_sha256("a" * 64)
+    storage.set_last_modified_version(10)
     return storage
 
 

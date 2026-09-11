@@ -1,15 +1,24 @@
-import json
 import logging
 import socket
 from copy import deepcopy
 from xml.etree import ElementTree as ET
 
 import pytest
+import numpy as np
 import requests
 
 from src import cli, build_profile, score_rank, ingest_zotero_api, fetch_new
 from src.http_utils import request_with_retry
 from .helpers import FIXTURES, FixedVectors, Response, read_json
+
+
+class PipelineVectors(FixedVectors):
+    def encode(self, texts):
+        values = read_json(FIXTURES / "vectors.json")
+        return np.asarray(
+            [values.get(text.split("\n")[0], [0.0, 0.0, 0.0]) for text in texts],
+            dtype="float32",
+        )
 
 
 def test_cli_profile_then_watch_real_pipeline(workspace, settings, candidates, monkeypatch):
@@ -19,15 +28,22 @@ def test_cli_profile_then_watch_real_pipeline(workspace, settings, candidates, m
                     Response([{"data": {"key": "NEW", "version": 20, "title": "New library science"}}], headers={"Last-Modified-Version": "20"}),
                     Response({"items": []}, headers={"Last-Modified-Version": "20"})])
     monkeypatch.setattr(ingest_zotero_api, "request_with_retry", lambda *a, **kw: next(replies))
-    monkeypatch.setattr(build_profile, "TextVectorizer", FixedVectors)
-    monkeypatch.setattr(score_rank, "TextVectorizer", FixedVectors)
+    monkeypatch.setattr(build_profile, "TextVectorizer", PipelineVectors)
+    monkeypatch.setattr(score_rank, "TextVectorizer", PipelineVectors)
     monkeypatch.setattr(fetch_new.CandidateFetcher, "_fetch_public_candidates", lambda *a: candidates)
     monkeypatch.setattr(fetch_new.CandidateFetcher, "_fetch_crossref_top_venues", lambda *a: [])
     cli.main(["profile", "--full", "--base-dir", str(workspace)])
-    before = (workspace / "data/profile.json").read_bytes()
+    before_pointer = read_json(workspace / "data/computational/current.json")
     cli.main(["watch", "--rss", "--report", "--top", "3", "--base-dir", str(workspace)])
-    assert (workspace / "data/profile.json").read_bytes() == before  # BUG-W1.
-    assert json.loads(before)["item_count"] == 2
+    after_pointer = read_json(workspace / "data/computational/current.json")
+    assert after_pointer["generation_id"] != before_pointer["generation_id"]
+    profile = read_json(
+        workspace
+        / "data/computational/generations"
+        / after_pointer["generation_id"]
+        / "profile.json"
+    )
+    assert profile["item_count"] == 3
     from src.storage import ProfileStorage
     db = ProfileStorage(workspace / "data/profile.sqlite")
     try:

@@ -10,9 +10,18 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .computational_state import (
+    StateCompatibilityError,
+    StateHandle,
+    StateLease,
+    StateManager,
+    descriptor_for_vectorizer,
+    expectation_from_snapshot,
+)
 from .faiss_store import FaissIndex
 from .models import CandidateWork, RankedWork
 from .settings import Settings
+from .storage import ProfileStorage
 from .vectorizer import TextVectorizer
 
 logger = logging.getLogger(__name__)
@@ -25,19 +34,63 @@ class RankerArtifacts:
 
 
 class WorkRanker:
-    def __init__(self, base_dir: Path | str, settings: Settings, vectorizer: TextVectorizer | None = None,
-                 *, state_dir: Path | None = None, metrics_path: Path | None = None):
+    def __init__(
+        self,
+        base_dir: Path | str,
+        settings: Settings,
+        vectorizer: TextVectorizer | None = None,
+        *,
+        state_dir: Path | None = None,
+        metrics_path: Path | None = None,
+        state_handle: StateHandle | None = None,
+        state_manager: StateManager | None = None,
+        storage: ProfileStorage | None = None,
+        lease: StateLease | None = None,
+    ):
         self.base_dir = Path(base_dir)
         self.settings = settings
         self.vectorizer = vectorizer or TextVectorizer()
         self.state_dir = Path(state_dir) if state_dir is not None else self.base_dir / "data"
         self.metrics_path = Path(metrics_path) if metrics_path is not None else self.base_dir / "data" / "journal_metrics.csv"
+        descriptor = descriptor_for_vectorizer(self.vectorizer)
+        if state_handle is None:
+            manager = state_manager or StateManager(self.state_dir)
+            owned_storage = storage is None
+            storage = storage or ProfileStorage(self.state_dir / "profile.sqlite")
+            try:
+                with manager.lease_scope(lease):
+                    try:
+                        snapshot = storage.read_profile_snapshot()
+                    except Exception as exc:
+                        raise StateCompatibilityError(
+                            "A committed profile SQLite mirror is required for ranking"
+                        ) from exc
+                    expectation = expectation_from_snapshot(snapshot, descriptor)
+                    state_handle = manager.load_current(expectation)
+            finally:
+                if owned_storage:
+                    storage.close()
+        if (
+            state_handle.manifest.embedding.model_fingerprint_sha256
+            != descriptor.hard_fingerprint_sha256
+        ):
+            raise StateCompatibilityError(
+                "Current state was built by an incompatible embedding model"
+            )
+        if (
+            descriptor.dimension is not None
+            and state_handle.manifest.embedding.dimension != descriptor.dimension
+        ):
+            raise StateCompatibilityError(
+                "Current state has an incompatible embedding dimension"
+            )
         self.artifacts = RankerArtifacts(
-            index_path=self.state_dir / "faiss.index",
-            profile_path=self.state_dir / "profile.json",
+            index_path=state_handle.index_path,
+            profile_path=state_handle.profile_path,
         )
         self.index = FaissIndex.load(self.artifacts.index_path)
-        self.profile = self._load_profile()
+        self.profile = state_handle.profile
+        self.state_handle = state_handle
         self.journal_metrics = self._load_journal_metrics()
 
     def _load_profile(self) -> dict:
@@ -76,6 +129,10 @@ class WorkRanker:
 
         texts = [c.content_for_embedding() for c in candidates]
         vectors = self.vectorizer.encode(texts)
+        if vectors.ndim != 2 or vectors.shape[1] != self.state_handle.manifest.embedding.dimension:
+            raise StateCompatibilityError(
+                "Candidate embedding dimension does not match current computational state"
+            )
         logger.info("Scoring %d candidate works", len(candidates))
 
         distances, _ = self.index.search(vectors, top_k=1)

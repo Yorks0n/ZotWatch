@@ -9,7 +9,19 @@ from dotenv import load_dotenv
 from zotwatch.paths import RuntimePaths
 from zotwatch.resources import journal_metrics_path
 
+from . import build_profile as build_profile_module
 from .build_profile import ProfileBuilder
+from .computational_state import (
+    ComputationalStateError,
+    StateCoordinator,
+    StateFutureSchemaError,
+    StateHandle,
+    StateLease,
+    StateManager,
+    descriptor_for_vectorizer,
+    expectation_from_snapshot,
+    pseudonymous_library_identity,
+)
 from .dedupe import DedupeEngine
 from .fetch_new import CandidateFetcher
 from .ingest_zotero_api import ZoteroIngestor
@@ -69,16 +81,36 @@ def main(argv: Optional[list[str]] = None) -> None:
 
 def run_profile(base_dir: Path, settings: Settings, storage: ProfileStorage, *, full: bool,
                 state_dir: Path | None = None) -> None:
-    ingest = ZoteroIngestor(storage, settings)
-    stats = ingest.run(full=full)
+    state_root = Path(state_dir) if state_dir is not None else storage.path.parent
+    coordinator = StateCoordinator(state_root)
+    manager = StateManager(state_root, coordinator=coordinator)
+    vectorizer = build_profile_module.TextVectorizer()
+    with coordinator.acquire() as lease:
+        ingest = ZoteroIngestor(storage, settings)
+        stats = ingest.run(
+            full=full,
+            library_identity_sha256=_library_identity(settings),
+            lease=lease,
+        )
+        logging.getLogger(__name__).info(
+            "Ingest stats: fetched=%s updated=%s removed=%s",
+            stats.fetched,
+            stats.updated,
+            stats.removed,
+        )
+        handle, artifacts = _ensure_computational_state(
+            base_dir,
+            settings,
+            storage,
+            state_root=state_root,
+            manager=manager,
+            vectorizer=vectorizer,
+            lease=lease,
+            force=full,
+        )
     logging.getLogger(__name__).info(
-        "Ingest stats: fetched=%s updated=%s removed=%s", stats.fetched, stats.updated, stats.removed
-    )
-    path_options = {"state_dir": state_dir} if state_dir is not None else {}
-    builder = ProfileBuilder(base_dir, storage, settings, **path_options)
-    artifacts = builder.run()
-    logging.getLogger(__name__).info(
-        "Profile artifacts generated: sqlite=%s faiss=%s json=%s",
+        "Profile artifacts ready: generation=%s sqlite=%s faiss=%s json=%s",
+        handle.generation_id,
         artifacts.sqlite_path,
         artifacts.faiss_path,
         artifacts.profile_json_path,
@@ -98,23 +130,52 @@ def run_watch(
     reports_dir: Path | None = None,
     journal_metrics: str = "legacy",
 ) -> None:
-    ingest = ZoteroIngestor(storage, settings)
-    ingest.run(full=False)
-
-    path_options = {"state_dir": state_dir} if state_dir is not None else {}
+    state_root = Path(state_dir) if state_dir is not None else storage.path.parent
+    coordinator = StateCoordinator(state_root)
+    manager = StateManager(state_root, coordinator=coordinator)
+    vectorizer = build_profile_module.TextVectorizer()
+    path_options = {"state_dir": state_root}
     output_dir = Path(reports_dir) if reports_dir is not None else base_dir / "reports"
-    fetcher = CandidateFetcher(settings, base_dir, **path_options)
-    candidates = fetcher.fetch_all()
+    with coordinator.acquire() as lease:
+        ingest = ZoteroIngestor(storage, settings)
+        ingest.run(
+            full=False,
+            library_identity_sha256=_library_identity(settings),
+            lease=lease,
+        )
+        state_handle, _ = _ensure_computational_state(
+            base_dir,
+            settings,
+            storage,
+            state_root=state_root,
+            manager=manager,
+            vectorizer=vectorizer,
+            lease=lease,
+            force=False,
+        )
 
-    dedupe = DedupeEngine(storage)
-    filtered = dedupe.filter(candidates)
+        fetcher = CandidateFetcher(
+            settings,
+            base_dir,
+            profile_summary=state_handle.profile,
+            **path_options,
+        )
+        candidates = fetcher.fetch_all()
+        dedupe = DedupeEngine(storage)
+        filtered = dedupe.filter(candidates)
 
-    with journal_metrics_path(journal_metrics, base_dir) as metrics_path:
-        ranker_options = dict(path_options)
-        if metrics_path is not None:
-            ranker_options["metrics_path"] = metrics_path
-        ranker = WorkRanker(base_dir, settings, **ranker_options)
-    ranked = ranker.rank(filtered)
+        with journal_metrics_path(journal_metrics, base_dir) as metrics_path:
+            ranker_options = dict(path_options)
+            if metrics_path is not None:
+                ranker_options["metrics_path"] = metrics_path
+            ranker = WorkRanker(
+                base_dir,
+                settings,
+                vectorizer,
+                state_handle=state_handle,
+                **ranker_options,
+            )
+        ranked = ranker.rank(filtered)
 
     ranked = _filter_recent(ranked, days=7)
     ranked = _limit_preprints(ranked, max_ratio=0.3)
@@ -141,6 +202,63 @@ def run_watch(
         render_html(ranked, output_dir / report_name)
     if push:
         ZoteroPusher(settings).push(ranked)
+
+
+def _library_identity(settings: Settings) -> str:
+    return pseudonymous_library_identity("user", settings.zotero.api.user_id)
+
+
+def _ensure_computational_state(
+    base_dir: Path,
+    settings: Settings,
+    storage: ProfileStorage,
+    *,
+    state_root: Path,
+    manager: StateManager,
+    vectorizer,
+    lease: StateLease,
+    force: bool,
+):
+    descriptor = descriptor_for_vectorizer(vectorizer)
+    snapshot = storage.read_profile_snapshot()
+    expectation = expectation_from_snapshot(snapshot, descriptor)
+    if not force:
+        try:
+            handle = manager.load_current(expectation)
+            return handle, _artifacts_from_handle(storage, handle)
+        except StateFutureSchemaError:
+            raise
+        except ComputationalStateError as exc:
+            logging.getLogger(__name__).info(
+                "Computational state requires rebuild: %s", exc
+            )
+
+    builder = ProfileBuilder(
+        base_dir,
+        storage,
+        settings,
+        vectorizer,
+        state_dir=state_root,
+        state_manager=manager,
+    )
+    artifacts = builder.run(lease=lease)
+    current_snapshot = storage.read_profile_snapshot()
+    current_expectation = expectation_from_snapshot(current_snapshot, descriptor)
+    handle = manager.load_current(current_expectation)
+    return handle, artifacts
+
+
+def _artifacts_from_handle(storage: ProfileStorage, handle: StateHandle):
+    from .models import ProfileArtifacts
+
+    return ProfileArtifacts(
+        sqlite_path=str(storage.path),
+        faiss_path=str(handle.index_path),
+        profile_json_path=str(handle.profile_path),
+        manifest_path=str(handle.manifest_path),
+        embeddings_path=str(handle.embeddings_path),
+        generation_id=handle.generation_id,
+    )
 
 
 def _log_top_results(ranked: list[RankedWork]) -> None:

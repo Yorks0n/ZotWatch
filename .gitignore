@@ -10,6 +10,8 @@ __pycache__/
 /data/*.sqlite
 /data/*.index
 /data/profile.json
+/data/computational/
+/data/.zotwatch-state.lock
 /data/cache/
 /data/cache/*
 

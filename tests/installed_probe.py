@@ -45,6 +45,9 @@ class Clock(datetime):
 
 class Vectors:
     model_name = "synthetic-e0-3d-v1"
+    model_revision = "synthetic-e0-revision-1"
+    artifact_identity = "synthetic-e0-vector-table-v1"
+    dimension = 3
 
     def encode(self, texts):
         values = json.loads((fixtures / "vectors.json").read_text())
@@ -90,4 +93,12 @@ with journal_metrics_path("bundled", workspace) as bundled:
     assert bundled.is_file()
     assert score_rank.WorkRanker(workspace, settings, Vectors(), state_dir=state,
                                 metrics_path=bundled).journal_metrics
-print(json.dumps({"cli_module": cli.__file__, "state": str(state), "reports": str(reports)}))
+pointer = json.loads((state / "computational/current.json").read_text())
+generation = state / "computational/generations" / pointer["generation_id"]
+print(json.dumps({
+    "cli_module": cli.__file__,
+    "state": str(state),
+    "reports": str(reports),
+    "profile": str(generation / "profile.json"),
+    "manifest": str(generation / "state-manifest.json"),
+}))
