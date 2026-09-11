@@ -24,6 +24,13 @@ E5 是 P2 reusable workflow / thin workspace 前最后一个 engine 阶段。它
 
 E5 不实现 reusable workflow、workspace-template、GitHub artifact/cache transport、Cloudflare、Zotero OAuth、AI 网络 adapter、AI rerank/summary、clustering、新 ranking、durable feedback、harvester 修复或 public candidate API redesign。
 
+### 1.1 Approved implementation clarifications
+
+- **E5A output capability checkpoint**：E5A 只执行 `rss` / `html`。虽然 E2 schema 已允许 `json`，但 E5A 在 preflight 将任何 enabled `json` request 明确报告为 `OUTPUT_FORMAT_UNAVAILABLE`，使用 capability/credential exit category 3，并在 Zotero sync、model load、candidate network 或其他 recommendation side effect 前停止。E5A 不 silent-ignore JSON，也不提前实现半套 JSON contract。E5A equivalence fixture 使用只含 RSS/HTML 的 v2 config；E5B 合入后 registry/capability table 才把 JSON 标为 supported。`v2-e5a-baseline` 只是内部 checkpoint，不满足最终 P2 JSON requirement。
+- **Complete legacy score provenance**：recommendation JSON v1 分别输出 `similarity`、`recency`、`citations`、`altmetric`、`journal_quality`、`author_bonus`、`venue_bonus` 七个 component。每项包含 `raw_value`、`weighted_contribution` 和 `input_available`；正常浮点容差内 `score == sum(weighted_contribution)`。E5B 可给内部 `RankedWork` 增加 additive `altmetric_score` / provenance 字段，但不改变公式、weights、threshold 或排序。
+- **Explicit preprint transport**：E5B 给 `CandidateWork` 增加 optional `is_preprint`。`public-api-v1` 原样保留 payload 的明确 boolean；明确的 arXiv/bioRxiv/medRxiv adapter 设置 `true`；无法确定时保持 `null`。JSON projector 不按标题、类型、URL 或“不是已知 preprint source”猜 false。`public_id` 继续从当前 whitelist metadata 显式投影，不复制 `extra`。
+- **P2 artifact authority**：immutable successful output generation、finalized artifact list 和 `latest-success` pointer 是 machine authority。stable report paths 仅为兼容/用户 alias。`RunResult` 与 private run manifest 给 P2 的 references 必须指向 immutable generation 内的相对路径，并包含 hash、size、media type；P2 后续按 finalized whitelist 上传/发布，不扫描 reports、不看 mtime、不依赖 aliases 的瞬时一致性。
+
 ## 2. 当前 runtime / output flow
 
 当前 public console entry `zotwatch.cli.main()` 有两条行为：
@@ -145,7 +152,7 @@ E5A accepts only the capabilities already constrained by config schema v2:
 | `ranking.policy=legacy-v1` | Exact frozen legacy weights, thresholds, decay rules and whitelist defaults used by the ordinary legacy projection. No scoring formula changes. |
 | `ranking.top_n` | Run top limit when no legacy compatibility wrapper is involved. |
 | `ranking.max_preprint_ratio=0.3` | Existing deterministic `_limit_preprints` policy. |
-| `outputs.formats` | Requested local render set for v2 `watch`; `profile` produces no recommendation outputs. |
+| `outputs.formats` | Requested local render set for v2 `watch`; E5A supports RSS/HTML and rejects JSON before side effects，E5B enables JSON；`profile` produces no recommendation outputs. |
 | `outputs.publish` | Recorded publish intent only. E5 performs no Pages/GitHub publication; P2 consumes this flag. |
 | disabled AI features | No route, credential or network requirement. |
 
@@ -162,7 +169,7 @@ zotwatch profile --workspace <workspace> [--full|--weekly]
 zotwatch watch --workspace <workspace> [--strict]
 ```
 
-For v2 `watch`, `top_n`, preprint ratio and output formats come from `zotwatch.yaml`. Existing legacy-only `--rss`, `--report`, `--top`, `--push` and custom journal-metrics switches are rejected as `CONFIG_OPTION_UNSUPPORTED` before Zotero sync when used with v2; this avoids an undocumented effective-config merge. P2 will invoke the canonical no-overlay form.
+For v2 `watch`, `top_n`, preprint ratio and output formats come from `zotwatch.yaml`. During E5A, `json` maps to `OUTPUT_FORMAT_UNAVAILABLE` before side effects; RSS/HTML continue. Existing legacy-only `--rss`, `--report`, `--top`, `--push` and custom journal-metrics switches are rejected as `CONFIG_OPTION_UNSUPPORTED` before Zotero sync when used with v2; this avoids an undocumented effective-config merge. P2 will invoke the canonical no-overlay form after E5B enables JSON.
 
 Legacy commands keep those switches unchanged. A future explicit v2 override contract can be versioned separately. E5 may add a legacy `--json` opt-in without changing existing invocations; Basic v2 already requests JSON through `outputs.formats`.
 
@@ -216,7 +223,7 @@ Basic v2 with AI disabled requires only Zotero identity/read credentials. The pa
 
 For every enabled AI route, preflight consults the E2 registry. All E2 preset and Custom protocol entries currently have `adapter_status=unimplemented`, so execution returns `CAPABILITY_UNAVAILABLE` with exit category 3 **before Zotero sync, candidate fetch, model load, or other recommendation side effects**, even when a corresponding fixed slot happens to be populated. E5 does not add AI requests.
 
-Issue precedence is deterministic: config/path invalid → capability unavailable → credential missing/malformed → explicit upstream verification failure. The preflight report can list all sanitized requirement statuses, while the final symbolic error follows that precedence.
+Issue precedence is deterministic: config/path invalid → output/provider capability unavailable → credential missing/malformed → explicit upstream verification failure. The preflight report can list all sanitized requirement statuses, while the final symbolic error follows that precedence. E5A's JSON gate uses `OUTPUT_FORMAT_UNAVAILABLE`; enabled unimplemented AI uses `CAPABILITY_UNAVAILABLE`.
 
 ### 4.3 Commands
 
@@ -267,12 +274,16 @@ Each item contains:
 | `authors` | ordered string array; empty means source supplied no usable authors |
 | `published_at` | UTC RFC 3339 string or null; missing date stays null |
 | `venue` / `url` | string or null |
-| `is_preprint` | boolean or null; known preprint source may yield true, unknown stays null and is never guessed false |
+| `is_preprint` | boolean or null; transported from an explicit adapter/payload field, otherwise null |
 | `score` | finite number; legacy score is not promised to be 0–1 |
 | `score_breakdown` | closed object for the current components |
 | `label` | current deterministic `must_read | consider | ignore` value |
 
-`score_breakdown` has the stable component names `similarity`, `recency`, `metrics`, `author_bonus`, `venue_bonus`, and `journal_quality`. Each is `{value: finite number, input_available: boolean}` so missing metrics/date/SJR are distinct from a real input producing zero. `journal_sjr` is number or null. The projection derives availability from explicit candidate fields and never fabricates missing upstream metrics.
+`score_breakdown` has exactly the seven terms in the current legacy formula: `similarity`, `recency`, `citations`, `altmetric`, `journal_quality`, `author_bonus`, and `venue_bonus`. Each is `{raw_value: finite number, weighted_contribution: finite number, input_available: boolean}`. `journal_sjr` remains number or null as supporting public metadata. Missing citation/altmetric/date/SJR/author/venue input is therefore distinguishable from an available input whose score is zero.
+
+The projector obtains raw values from additive ranking provenance. In particular, E5B adds `altmetric_score` because current `RankedWork.metric_score` preserves only the transformed citation value even though total score includes both citation and altmetric terms. The new provenance is observational: the ranker computes the same seven terms once, stores them, and sums the same weighted contributions in the same order. Tests require `score == sum(weighted_contribution)` within the established floating tolerance and require unchanged total scores/order/goldens.
+
+`CandidateWork.is_preprint` is optional and defaults to null. The public-v1 mapper copies its existing `is_preprint` boolean without coercing missing values; explicit arXiv/bioRxiv/medRxiv adapters set true. Other adapters leave it null unless their upstream protocol supplies an explicit reliable value. The JSON projector never infers false from source absence and never uses title/type/URL heuristics. This metadata transport does not change preprint filtering/ranking in E5; the frozen legacy policy continues to use its existing behavior until separately versioned.
 
 No `metrics` or `extra` object is copied wholesale. `public_id` and any future allowed public field require an explicit projector/schema addition.
 
@@ -401,7 +412,7 @@ Numeric codes stay few and stable:
 Detailed symbolic codes live in the manifest and machine result. Initial closed catalog:
 
 - config: `CONFIG_INVALID`, `CONFIG_MIXED_MODES`, `CONFIG_OPTION_UNSUPPORTED`;
-- preflight: `CAPABILITY_UNAVAILABLE`, `CREDENTIAL_MISSING`, `CREDENTIAL_MALFORMED`, `CREDENTIAL_VERIFICATION_FAILED`;
+- preflight: `OUTPUT_FORMAT_UNAVAILABLE`, `CAPABILITY_UNAVAILABLE`, `CREDENTIAL_MISSING`, `CREDENTIAL_MALFORMED`, `CREDENTIAL_VERIFICATION_FAILED`;
 - sync/state: `ZOTERO_SYNC_FAILED`, `STATE_INCOMPATIBLE`, `STATE_BUILD_FAILED`, `STATE_CORRUPT`;
 - candidates: `CANDIDATE_PARTIAL`, `CANDIDATE_STALE_CACHE`, `CANDIDATE_UNAVAILABLE`, `CANDIDATE_PAYLOAD_INVALID`;
 - execution/output: `DEDUPE_FAILED`, `RANKING_FAILED`, `OUTPUT_CONTRACT_INVALID`, `OUTPUT_RENDER_FAILED`, `OUTPUT_PUBLISH_FAILED`, `ZOTERO_WRITEBACK_FAILED`, `INTERNAL_ERROR`.
@@ -460,8 +471,9 @@ The private run manifest stays in `state/runs/`, outside this publishable tree. 
 6. If legacy Zotero writeback was requested, perform it only after staged output validates and before output publication. A writeback failure does not publish staged reports.
 7. Rename the complete staged directory to immutable `generations/<run-id>` on the same filesystem.
 8. Atomically replace `latest-success.json`. Only a complete validated generation can become authority.
-9. Reconcile each requested stable compatibility path using temp-file + fsync + `os.replace`. Each visible file is therefore either an old complete artifact or a new complete artifact. An interruption can temporarily leave aliases from different **successful** generations, never partial bytes or a failed render; the next invocation repairs aliases from the authoritative pointer before starting a new run.
-10. Finalize the private success manifest and `latest-attempt` pointer.
+9. Finalize the immutable generation artifact list with generation-relative path, SHA-256, size, media type and publishable flag. This list plus the atomic `latest-success` pointer is the machine authority consumed by RunResult/run manifest/P2.
+10. Reconcile each requested stable compatibility path using temp-file + fsync + `os.replace`. Each visible file is therefore either an old complete artifact or a new complete artifact. An interruption can temporarily leave aliases from different **successful** generations, never partial bytes or a failed render; the next invocation repairs aliases from the authoritative pointer before starting a new run.
+11. Finalize the private success manifest and `latest-attempt` pointer.
 
 Unrequested formats are not deleted. P2 uses the current generation's explicit artifact list, so a stale unrequested compatibility file cannot be accidentally published as part of the current run.
 
@@ -489,7 +501,7 @@ RunResult
 
 Python `Path` objects may be absolute in memory for the caller process. Persisted/machine JSON uses only state/report-root relative references.
 
-Add `--machine-result` to the public `zotwatch` entry point. It writes exactly one closed `run-result-v1` JSON object to stdout after finalization; logs remain on stderr. It contains run/status/exit/error and relative manifest/artifact references, not config, profile data or absolute paths. Without the flag, the CLI prints concise human status and returns the same numeric code.
+Add `--machine-result` to the public `zotwatch` entry point. It writes exactly one closed `run-result-v1` JSON object to stdout after finalization; logs remain on stderr. It contains run/status/exit/error and immutable-generation artifact references, not stable aliases, config, profile data or absolute paths. Each P2-facing reference agrees with the finalized artifact whitelist's generation-relative path/hash/size/media type. Without the flag, the CLI prints concise human status and returns the same numeric code.
 
 P2 will only need to invoke the engine, read this machine result, and upload/restore files named by validated contracts. It must not parse logs, inspect Python exception names, derive success from process 0 alone, or scan directories for newest files.
 
@@ -572,7 +584,8 @@ Exact module names may be adjusted during implementation, but config, runtime, r
 | Case | Expected proof |
 | --- | --- |
 | Legacy successful profile/watch | Existing command/config behavior and E0 ranking/RSS/HTML bytes remain unchanged. |
-| Equivalent Basic v2 watch | With identical mirror/candidates/vectorizer/clock, RankedWork order/scores and RSS/HTML bytes equal legacy default; JSON/manifest are additional. |
+| Equivalent Basic v2 watch | E5A uses an RSS/HTML-only v2 fixture; with identical mirror/candidates/vectorizer/clock, RankedWork order/scores and RSS/HTML bytes equal legacy default. E5B adds JSON/manifest. |
+| E5A JSON request | Schema-valid config fails `OUTPUT_FORMAT_UNAVAILABLE`, exit 3, before sync/model/candidate side effects; no JSON file is created. |
 | v2 profile then watch | Both execute E3/E4 rather than return `CONFIG_V2_EXECUTION_DEFERRED`; revision/state handle match. |
 | Mixed config | `CONFIG_MIXED_MODES`, exit 2, no sync/fetch/model load. |
 | v2 legacy-only CLI overlay | `CONFIG_OPTION_UNSUPPORTED`, exit 2 before side effects. |
@@ -582,6 +595,8 @@ Exact module names may be adjusted during implementation, but config, runtime, r
 | Explicit Zotero verification | Read-only bounded check; verified/failed distinct from configured; no SQLite mutation. |
 | Public pool credential | No caller Supabase requirement; packaged connection used and never serialized. |
 | Recommendation JSON golden | Closed schema, deterministic order/ranks/work_key/scores/nulls at frozen time. |
+| Complete score provenance | Seven raw/contribution/availability records reproduce total score within tolerance; added altmetric provenance does not change order or totals. |
+| Explicit preprint metadata | public-v1 true/false is preserved, explicit preprint adapters set true, absent metadata remains null; projector performs no heuristic inference. |
 | Duplicate/missing work identity | Output contract fails; no latest-success replacement. |
 | Publishable JSON leakage | Sentinel Zotero item/profile/key/env/base URL/absolute path/extra data absent from all keys/values. |
 | Successful profile manifest | Only config/preflight/sync/state stages; no fake recommendation artifacts. |
@@ -600,6 +615,7 @@ Exact module names may be adjusted during implementation, but config, runtime, r
 | Manifest/result sanitization | No secret/env name, raw ID/item, endpoint, traceback or absolute path. |
 | Stable exit mapping | Known failures map to 2/3/4/5; detailed distinction remains symbolic. |
 | Wheel/editable/outside checkout | v2 Basic execution, schemas, preflight and machine result work from installed engine. |
+| P2 artifact references | RunResult/manifest references resolve inside immutable selected generation and match whitelist hash/size/media type; aliases are never authoritative inputs. |
 | E3/E4 after E5 failure | SQLite revision/current computational pointer unchanged except a sync already atomically committed before a later-stage failure; stale state is never ranked. |
 | Immutable E0 inputs | `git diff --exit-code --diff-filter=DMR v2-e0-baseline -- tests/goldens tests/fixtures` remains empty. |
 
