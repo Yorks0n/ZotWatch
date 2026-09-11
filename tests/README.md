@@ -27,6 +27,9 @@ PYTHONHASHSEED=0 TZ=UTC OMP_NUM_THREADS=1 /tmp/zotwatch-e0-venv/bin/python -m py
 | [test_zotero_sync_e3.py](test_zotero_sync_e3.py) | E3 revision state machine、trash/restore、分页失败、远端漂移、坏记录、full 对账、SQLite 原子提交与 stats 兼容 |
 | [test_computational_state_e4.py](test_computational_state_e4.py) | E4 profile/watch consistency、reuse/invalidation、library identity、模型隔离与 official run lease ownership |
 | [test_state_manifest_e4.py](test_state_manifest_e4.py) | E4 manifest/fingerprint、atomic generation publication、corruption/revision drift/interruption recovery |
+| [test_runtime_config_e5.py](test_runtime_config_e5.py) | E5A Basic v2 effective settings、engine-owned public connection、legacy runtime isolation |
+| [test_runtime_preflight_e5.py](test_runtime_preflight_e5.py) | E5A output/provider capability、credential presence 与 explicit Zotero verification |
+| [test_runtime_cli_e5a.py](test_runtime_cli_e5a.py) | E5A v2 dispatch、side-effect-free rejection、legacy-only option boundary |
 | [test_candidates.py](test_candidates.py) | 冻结 public v1 分页/映射，来源路由、12 小时 cache、故障回退与 Crossref 补抓 |
 | [test_profile_ranking_outputs.py](test_profile_ranking_outputs.py) | profile、真实 FAISS 保存/读取/检索、排名分项及稳定 tie、labels、recency 边界、SJR、RSS/HTML 完整 golden |
 | [test_pipeline_http.py](test_pipeline_http.py) | CLI profile → watch 的真实本地链路、HTTP 重试/错误、离线防护自检 |

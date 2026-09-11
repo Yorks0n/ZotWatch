@@ -113,5 +113,7 @@ def test_installed_pipeline_matches_e0_goldens(kind, entry, workspace):
     assert (reports / "full.xml").read_bytes() == (GOLDENS / "ranked.xml").read_bytes()
     assert (reports / "full.html").read_bytes() == (GOLDENS / "ranked.html").read_bytes()
     assert (reports / "report-20260114.html").exists()
+    assert Path(metadata["v2_feed"]).is_file()
+    assert Path(metadata["v2_report"]).is_file()
     assert before == {str(p): hashlib.sha256(p.read_bytes()).hexdigest() for p in package.rglob("*.py")}
     assert not any(p.suffix in {".sqlite", ".index", ".csv"} for p in package.rglob("*"))

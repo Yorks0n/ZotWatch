@@ -1,11 +1,16 @@
 from copy import deepcopy
 import shutil
+from types import SimpleNamespace
 
 import yaml
 
-from src import cli as legacy_cli
+from src import build_profile, cli as legacy_cli, fetch_new, ingest_zotero_api, score_rank
+from src.computational_state import pseudonymous_library_identity
+from src.models import ZoteroItem
+from src.storage import ProfileStorage
 from zotwatch import cli
 
+from .helpers import FIXTURES, FixedVectors, read_json
 from .test_config_v2 import minimal_config
 
 
@@ -80,3 +85,65 @@ def test_v2_rejects_legacy_run_overlay_before_pipeline(workspace, monkeypatch, c
     assert cli.main(["watch", "--workspace", str(workspace), "--top", "5"]) == 2
     assert "CONFIG_OPTION_UNSUPPORTED" in capsys.readouterr().err
     assert called == []
+
+
+def test_legacy_and_basic_v2_share_ranking_and_rss_html_content(
+    workspace, candidates, monkeypatch
+):
+    v2_workspace = workspace / "v2-workspace"
+    v2_workspace.mkdir()
+    write_config(v2_workspace)
+    identity = pseudonymous_library_identity("user", "123456")
+    legacy_state = workspace / "legacy-state"
+    v2_state = workspace / "v2-state"
+    for state in (legacy_state, v2_state):
+        storage = ProfileStorage(state / "profile.sqlite")
+        storage.initialize()
+        for row in read_json(FIXTURES / "zotero.json"):
+            item = ZoteroItem.from_zotero_api(row)
+            storage.upsert_item(item, f"hash-{item.key}")
+        storage.set_library_identity_sha256(identity)
+        storage.set_last_modified_version(10)
+        storage.close()
+
+    monkeypatch.setattr(
+        ingest_zotero_api.ZoteroIngestor,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(fetched=0, updated=0, removed=0),
+    )
+    monkeypatch.setattr(build_profile, "TextVectorizer", FixedVectors)
+    monkeypatch.setattr(score_rank, "TextVectorizer", FixedVectors)
+    monkeypatch.setattr(fetch_new.CandidateFetcher, "fetch_all", lambda self: candidates)
+    captures = []
+    original_rank = score_rank.WorkRanker.rank
+
+    def capture(self, values):
+        result = original_rank(self, values)
+        captures.append([item.model_dump(mode="json") for item in result])
+        return result
+
+    monkeypatch.setattr(score_rank.WorkRanker, "rank", capture)
+    legacy_reports = workspace / "legacy-reports"
+    v2_reports = workspace / "v2-reports"
+
+    legacy_cli.main([
+        "profile", "--workspace", str(workspace), "--state-dir", str(legacy_state)
+    ])
+    legacy_cli.main([
+        "watch", "--workspace", str(workspace), "--state-dir", str(legacy_state),
+        "--reports-dir", str(legacy_reports), "--rss", "--report", "--top", "20",
+        "--journal-metrics", "bundled",
+    ])
+    assert cli.main([
+        "profile", "--workspace", str(v2_workspace), "--state-dir", str(v2_state)
+    ]) == 0
+    assert cli.main([
+        "watch", "--workspace", str(v2_workspace), "--state-dir", str(v2_state),
+        "--reports-dir", str(v2_reports),
+    ]) == 0
+
+    assert captures[0] == captures[1]
+    assert (legacy_reports / "feed.xml").read_bytes() == (v2_reports / "feed.xml").read_bytes()
+    assert (legacy_reports / "report-20260114.html").read_bytes() == (
+        v2_reports / "report-20260114.html"
+    ).read_bytes()

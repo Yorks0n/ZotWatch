@@ -5,6 +5,7 @@ from pathlib import Path
 import socket
 import sys
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import numpy as np
 import requests
@@ -95,10 +96,52 @@ with journal_metrics_path("bundled", workspace) as bundled:
                                 metrics_path=bundled).journal_metrics
 pointer = json.loads((state / "computational/current.json").read_text())
 generation = state / "computational/generations" / pointer["generation_id"]
+
+# E5A: an installed Basic v2 workspace uses the same E3/E4/ranking/writer pipeline.
+v2_workspace = workspace.parent / (workspace.name + "-v2")
+v2_workspace.mkdir()
+(v2_workspace / "zotwatch.yaml").write_text("""schema_version: 2
+zotero:
+  library_type: user
+candidates:
+  provider: public-api-v1
+  sources: [crossref, arxiv, biorxiv]
+  window_days: 7
+ranking:
+  policy: legacy-v1
+  top_n: 3
+  max_preprint_ratio: 0.3
+embedding:
+  provider: local
+  model: sentence-transformers/all-MiniLM-L6-v2
+ai:
+  services: {}
+  features:
+    rerank: {enabled: false}
+    summary: {enabled: false}
+outputs:
+  formats: [rss, html]
+  publish: false
+""")
+ingest_zotero_api.ZoteroIngestor.run = lambda *a, **kw: SimpleNamespace(
+    fetched=0, updated=0, removed=0
+)
+v2_reports = workspace.parent / (workspace.name + "-v2-reports")
+v2_common = [
+    "--workspace", str(v2_workspace),
+    "--state-dir", str(state),
+    "--reports-dir", str(v2_reports),
+]
+assert public_main(["profile", *v2_common]) == 0
+assert public_main(["watch", *v2_common]) == 0
+assert (v2_reports / "feed.xml").read_bytes() == (reports / "feed.xml").read_bytes()
+assert (v2_reports / "report-20260114.html").is_file()
 print(json.dumps({
     "cli_module": cli.__file__,
     "state": str(state),
     "reports": str(reports),
     "profile": str(generation / "profile.json"),
     "manifest": str(generation / "state-manifest.json"),
+    "v2_feed": str(v2_reports / "feed.xml"),
+    "v2_report": str(v2_reports / "report-20260114.html"),
 }))

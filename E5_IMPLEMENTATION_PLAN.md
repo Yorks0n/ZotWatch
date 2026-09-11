@@ -2,7 +2,7 @@
 
 日期：2026-09-11
 
-状态：**plan only；等待审阅，尚未修改 production code。**
+状态：**已批准；E5A implementation complete，等待远端封板；E5B 尚未开始。**
 
 起点：`v2-e4-baseline` / `5afdaa603ec5e9978ea871505c6233c33e23b7a3`。
 
