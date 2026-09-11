@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from .models import ZoteroItem
 
@@ -33,6 +34,15 @@ CREATE TABLE IF NOT EXISTS metadata (
 
 CREATE INDEX IF NOT EXISTS idx_items_version ON items(version);
 """
+
+SQLITE_DELETE_BATCH_SIZE = 500
+
+
+@dataclass(frozen=True)
+class SyncApplyResult:
+    inserted: int = 0
+    changed: int = 0
+    removed: int = 0
 
 
 class ProfileStorage:
@@ -79,41 +89,7 @@ class ProfileStorage:
 
     # item helpers
     def upsert_item(self, item: ZoteroItem, content_hash: Optional[str] = None) -> None:
-        data = (
-            item.key,
-            item.version,
-            item.title,
-            item.abstract,
-            json.dumps(item.creators),
-            json.dumps(item.tags),
-            json.dumps(item.collections),
-            item.year,
-            item.doi,
-            item.url,
-            json.dumps(item.raw),
-            content_hash,
-        )
-        self.connect().execute(
-            """
-            INSERT INTO items(
-                key, version, title, abstract, creators, tags, collections, year, doi, url, raw_json, content_hash
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(key) DO UPDATE SET
-                version=excluded.version,
-                title=excluded.title,
-                abstract=excluded.abstract,
-                creators=excluded.creators,
-                tags=excluded.tags,
-                collections=excluded.collections,
-                year=excluded.year,
-                doi=excluded.doi,
-                url=excluded.url,
-                raw_json=excluded.raw_json,
-                content_hash=excluded.content_hash,
-                updated_at=CURRENT_TIMESTAMP
-            """,
-            data,
-        )
+        _execute_upsert(self.connect(), _item_data(item, content_hash))
         self.connect().commit()
 
     def remove_items(self, keys: Iterable[str]) -> None:
@@ -123,6 +99,81 @@ class ProfileStorage:
         placeholders = ",".join("?" for _ in keys)
         self.connect().execute(f"DELETE FROM items WHERE key IN ({placeholders})", keys)
         self.connect().commit()
+
+    def apply_zotero_sync(
+        self,
+        items: Iterable[Tuple[ZoteroItem, Optional[str]]],
+        removal_keys: Iterable[str],
+        *,
+        full: bool,
+        revision: int,
+    ) -> SyncApplyResult:
+        """Apply one complete Zotero revision and its watermark atomically.
+
+        All network acquisition and validation must finish before this method is
+        called. Full mode reconciles the local key set to the supplied active
+        items; incremental mode removes only the supplied trash/tombstone keys.
+        """
+
+        item_data = [_item_data(item, content_hash) for item, content_hash in items]
+        item_keys = [data[0] for data in item_data]
+        if len(item_keys) != len(set(item_keys)):
+            raise ValueError("Zotero sync batch contains duplicate active item keys")
+        requested_removals = set(removal_keys)
+
+        conn = self.connect()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            existing_rows = {
+                row["key"]: row
+                for row in conn.execute(
+                    """
+                    SELECT key, version, title, abstract, creators, tags, collections,
+                           year, doi, url, raw_json, content_hash
+                    FROM items
+                    """
+                )
+            }
+            if full:
+                keys_to_remove = set(existing_rows) - set(item_keys)
+            else:
+                keys_to_remove = requested_removals
+
+            # A tombstone or trash transition describes final absence and wins
+            # over an item record for the same stable library revision.
+            effective_item_data = [data for data in item_data if data[0] not in keys_to_remove]
+
+            inserted = 0
+            changed = 0
+            for data in effective_item_data:
+                existing = existing_rows.get(data[0])
+                if existing is None:
+                    inserted += 1
+                    _execute_upsert(conn, data)
+                    continue
+                if _row_item_data(existing) != data:
+                    if data[1] < existing["version"]:
+                        raise ValueError(
+                            f"Zotero item {data[0]} would regress from version "
+                            f"{existing['version']} to {data[1]}"
+                        )
+                    changed += 1
+                    _execute_upsert(conn, data)
+
+            actually_present = set(existing_rows)
+            actually_present.update(data[0] for data in effective_item_data)
+            removed = len(actually_present & keys_to_remove)
+            _delete_keys(conn, keys_to_remove)
+            conn.execute(
+                "REPLACE INTO metadata(key, value) VALUES(?, ?)",
+                ("last_modified_version", str(revision)),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+        return SyncApplyResult(inserted=inserted, changed=changed, removed=removed)
 
     def set_embedding(self, key: str, vector: bytes) -> None:
         self.connect().execute(
@@ -166,4 +217,70 @@ def _row_to_item(row: sqlite3.Row) -> ZoteroItem:
     )
 
 
-__all__ = ["ProfileStorage"]
+def _item_data(item: ZoteroItem, content_hash: Optional[str]) -> Tuple[object, ...]:
+    return (
+        item.key,
+        item.version,
+        item.title,
+        item.abstract,
+        json.dumps(item.creators),
+        json.dumps(item.tags),
+        json.dumps(item.collections),
+        item.year,
+        item.doi,
+        item.url,
+        json.dumps(item.raw),
+        content_hash,
+    )
+
+
+def _row_item_data(row: sqlite3.Row) -> Tuple[object, ...]:
+    return (
+        row["key"],
+        row["version"],
+        row["title"],
+        row["abstract"],
+        row["creators"],
+        row["tags"],
+        row["collections"],
+        row["year"],
+        row["doi"],
+        row["url"],
+        row["raw_json"],
+        row["content_hash"],
+    )
+
+
+def _execute_upsert(conn: sqlite3.Connection, data: Sequence[object]) -> None:
+    conn.execute(
+        """
+        INSERT INTO items(
+            key, version, title, abstract, creators, tags, collections, year, doi, url, raw_json, content_hash
+        ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET
+            version=excluded.version,
+            title=excluded.title,
+            abstract=excluded.abstract,
+            creators=excluded.creators,
+            tags=excluded.tags,
+            collections=excluded.collections,
+            year=excluded.year,
+            doi=excluded.doi,
+            url=excluded.url,
+            raw_json=excluded.raw_json,
+            content_hash=excluded.content_hash,
+            updated_at=CURRENT_TIMESTAMP
+        """,
+        data,
+    )
+
+
+def _delete_keys(conn: sqlite3.Connection, keys: Iterable[str]) -> None:
+    ordered = sorted(set(keys))
+    for offset in range(0, len(ordered), SQLITE_DELETE_BATCH_SIZE):
+        batch = ordered[offset : offset + SQLITE_DELETE_BATCH_SIZE]
+        placeholders = ",".join("?" for _ in batch)
+        conn.execute(f"DELETE FROM items WHERE key IN ({placeholders})", batch)
+
+
+__all__ = ["ProfileStorage", "SyncApplyResult"]

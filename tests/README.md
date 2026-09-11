@@ -24,6 +24,7 @@ PYTHONHASHSEED=0 TZ=UTC OMP_NUM_THREADS=1 /tmp/zotwatch-e0-venv/bin/python -m py
 | --- | --- |
 | [test_config_cli.py](test_config_cli.py) | 旧三 YAML、env、参数/错误、7 日过滤、预印本比例、Top N、ignore、mock push、报告文件名、原 daily workflow 静态行为 |
 | [test_ingestion_dedupe.py](test_ingestion_dedupe.py) | Zotero 304/分页/新增/更新/删除/full/网络故障，真实 SQLite，DOI/URL/ID/模糊标题去重 |
+| [test_zotero_sync_e3.py](test_zotero_sync_e3.py) | E3 revision state machine、trash/restore、分页失败、远端漂移、坏记录、full 对账、SQLite 原子提交与 stats 兼容 |
 | [test_candidates.py](test_candidates.py) | 冻结 public v1 分页/映射，来源路由、12 小时 cache、故障回退与 Crossref 补抓 |
 | [test_profile_ranking_outputs.py](test_profile_ranking_outputs.py) | profile、真实 FAISS 保存/读取/检索、排名分项及稳定 tie、labels、recency 边界、SJR、RSS/HTML 完整 golden |
 | [test_pipeline_http.py](test_pipeline_http.py) | CLI profile → watch 的真实本地链路、HTTP 重试/错误、离线防护自检 |
@@ -41,10 +42,10 @@ PYTHONHASHSEED=0 TZ=UTC OMP_NUM_THREADS=1 /tmp/zotwatch-e0-venv/bin/python -m py
 | 编号 | 原版行为 | 观察测试 |
 | --- | --- | --- |
 | BUG-C1 / C2 | public key YAML 优先于 env；MAILTO env 不被配置读取 | test_bug_config_key_priority_and_mailto |
-| BUG-I1 | 删除请求使用本轮新水位，可能跳过旧水位后的删除 | test_bug_ingest_deletion_watermark_and_partial_progress |
-| BUG-I2 | 分页中断后仍可能推进同步水位 | 同上 partial=True |
-| BUG-I3 | full 不清理远端已不存在的旧条目 | test_bug_full_sync_retains_absent_rows |
-| BUG-I4 | 内容更新保留旧 embedding | test_bug_ingest_deletion_watermark_and_partial_progress |
+| BUG-I1 | **E3 已修复 / E3-SYNC-002**：删除查询固定使用本轮开始前已提交水位 | test_incremental_one_permanently_deleted_item；test_incremental_add_modify_delete_uses_start_revision |
+| BUG-I2 | **E3 已修复 / E3-SYNC-001/004**：分页或 deleted 失败不写 rows/watermark | test_middle_page_failure_leaves_rows_and_watermark_unchanged；test_deleted_endpoint_failure_leaves_rows_and_watermark_unchanged |
+| BUG-I3 | **E3 已修复 / E3-SYNC-003**：full 将 active remote key set 与本地 mirror 对账 | test_full_sync_excludes_trash_and_removes_stale_rows |
+| BUG-I4 | 内容更新保留旧 embedding；E3 不修改 computational state | test_bug_content_update_still_preserves_embedding |
 | BUG-W1 | watch 更新 SQLite 后不重建 profile/index | test_cli_profile_then_watch_real_pipeline；test_bug_watch_does_not_rebuild_and_keeps_ignore |
 | BUG-W2 | 预印本前缀比例会丢弃前排预印本；只按 source 判断 | test_bug_preprint_prefix_cap_and_source_classification |
 | BUG-F1 | public is_preprint 被丢弃 | test_public_paging_mapping_and_preprint_loss |
@@ -52,7 +53,7 @@ PYTHONHASHSEED=0 TZ=UTC OMP_NUM_THREADS=1 /tmp/zotwatch-e0-venv/bin/python -m py
 | BUG-F3 | 没有非空旧缓存时，来源失败可写成 fresh 空结果 | 同上 stale=False/supplement=False |
 | BUG-F4 | cache 不含配置 fingerprint，改来源后仍复用 12h 内旧结果 | test_cache_boundary_and_config_not_part_of_key |
 
-另记录：unchanged upsert 仍计入 updated；DOI URL prefix 不归一化；公共 title 不解码 HTML entity；Crossref 用 created 作为 published；权重总和 .95 未自动归一化。这些观察的修改也要在独立行为修复中解释。
+另记录：E3 为兼容保留 unchanged/replayed record 计入 `updated`，实际行变化由 `applied_changed` 表达；DOI URL prefix 不归一化；公共 title 不解码 HTML entity；Crossref 用 created 作为 published；权重总和 .95 未自动归一化。这些观察的修改也要在独立行为修复中解释。
 
 ## 验证证据与限制
 
