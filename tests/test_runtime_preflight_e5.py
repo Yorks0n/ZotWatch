@@ -1,6 +1,8 @@
 from copy import deepcopy
+import shutil
 
 import yaml
+import requests
 
 from zotwatch.runtime.config import load_effective_runtime
 from zotwatch.runtime.preflight import preflight
@@ -9,6 +11,8 @@ from .test_config_v2 import minimal_config
 
 
 def write_config(workspace, data):
+    if (workspace / "config").exists():
+        shutil.rmtree(workspace / "config")
     (workspace / "zotwatch.yaml").write_text(
         yaml.safe_dump(data, sort_keys=False), encoding="utf-8"
     )
@@ -83,3 +87,51 @@ def test_missing_zotero_credentials_are_presence_not_verification(workspace, mon
     assert all(not item.configured for item in zotero)
     assert all(item.verification == "not_requested" for item in zotero)
 
+
+def test_live_zotero_verification_is_explicit_and_read_only(workspace, monkeypatch):
+    data = minimal_config()
+    data["outputs"]["formats"] = ["rss"]
+    write_config(workspace, data)
+    monkeypatch.setenv("ZOTERO_USER_ID", "12345")
+    monkeypatch.setenv("ZOTERO_API_KEY", "synthetic-zotero-key")
+    calls = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+    class Session:
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return Response()
+
+    report = preflight(
+        load_effective_runtime(workspace), verify_zotero=True, session=Session()
+    )
+    assert report.ready
+    assert calls[0][1]["params"] == {"limit": 1}
+    assert calls[0][1]["timeout"] == 15
+    assert all(
+        item.verification == "verified"
+        for item in report.requirements
+        if item.requirement_id.startswith("zotero")
+    )
+
+
+def test_live_zotero_failure_does_not_echo_remote_error(workspace, monkeypatch):
+    data = minimal_config()
+    data["outputs"]["formats"] = ["rss"]
+    write_config(workspace, data)
+    monkeypatch.setenv("ZOTERO_USER_ID", "12345")
+    monkeypatch.setenv("ZOTERO_API_KEY", "synthetic-zotero-key")
+
+    class Session:
+        def get(self, *args, **kwargs):
+            raise requests.ConnectionError("secret remote diagnostic")
+
+    report = preflight(
+        load_effective_runtime(workspace), verify_zotero=True, session=Session()
+    )
+    assert not report.ready
+    assert report.error_code == "CREDENTIAL_VERIFICATION_FAILED"
+    assert "secret remote diagnostic" not in report.model_dump_json()
