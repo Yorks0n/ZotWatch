@@ -1,4 +1,5 @@
 from copy import deepcopy
+import shutil
 
 import yaml
 
@@ -9,6 +10,8 @@ from .test_config_v2 import minimal_config
 
 
 def write_config(workspace, formats=("rss", "html"), *, ai=None):
+    if (workspace / "config").exists():
+        shutil.rmtree(workspace / "config")
     data = deepcopy(minimal_config())
     data["outputs"]["formats"] = list(formats)
     if ai is not None:
@@ -77,4 +80,3 @@ def test_v2_rejects_legacy_run_overlay_before_pipeline(workspace, monkeypatch, c
     assert cli.main(["watch", "--workspace", str(workspace), "--top", "5"]) == 2
     assert "CONFIG_OPTION_UNSUPPORTED" in capsys.readouterr().err
     assert called == []
-
