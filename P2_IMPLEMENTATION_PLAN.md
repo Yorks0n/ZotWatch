@@ -461,8 +461,8 @@ Template验证工具优先留在central P2 contract tests与private acceptance h
 | Action refs | every external `uses` is 40-char SHA and in reviewed pins fixture |
 | Compute permission lint | default caller/`run.yml` only contents/actions read; no PR trigger, Pages/OIDC or write scopes |
 | Pages permission lint | Pages scopes/actions exist only in separate `publish-pages.yml` and explicit second caller job fixture |
-| Prior-run selection | exact caller workflow/repository/ref; newest older completed success; only schedule/dispatch |
-| Prior-run rejection | failed/cancelled/degraded-marker/PR/wrong repo/workflow/ref/current run cannot supply state |
+| Prior-run selection | exact caller workflow/repository/ref; newest-first最多15个completed trusted candidates；首个自身checkpoint contract有效者 |
+| Prior-run rejection | failed/degraded compute marker、PR、wrong repo/workflow/ref/current run不能供state；validate-only自然跳过；Pages-only failure不废弃valid checkpoint |
 | Artifact selection | exact selected run + fixed name + one unexpired artifact + numeric ID; no caller-supplied selector |
 | Artifact/API miss | no prior run, missing/expired/duplicate artifact, pagination bound or API/download failure rebuilds |
 | No personal cache | no cache path can contain profile.sqlite/computational/checkpoint/workspace/reports |
@@ -490,7 +490,7 @@ Workflow syntax/static tests不能代替GitHub execution。P2A PR还要在一个
 每个workspace执行并记录sanitized证据：
 
 1. **First manual run**：没有previous checkpoint artifact，`mode=run`；E3从Zotero建立mirror，E4建立state，final RunResult有效，得到RSS/HTML/JSON、private manifest与固定name private checkpoint artifact。
-2. **Restored-state run**：再次manual run；REST选择同repo/caller workflow/ref的newest completed successful trusted exact run，按exact artifact ID下载checkpoint，importer/E3/E4验证通过；新RunResult与输出完整。
+2. **Restored-state run**：再次manual run；REST按同repo/caller workflow/ref newest-first检查最多15个completed trusted candidates，按exact artifact ID恢复第一个完整有效checkpoint，importer/E3/E4验证通过；新RunResult与输出完整。插入一个validate-only success后仍能恢复更早checkpoint。
 3. **Scheduled-equivalent run**：同schedule默认inputs执行同一caller path；至少一个真实schedule trigger完成，或在测试窗口先以相同resolved inputs手动canary并随后记录首个schedule。
 4. **Manual full rebuild**：`mode=run, full-rebuild=true`；先有独立profile RunResult/manifest，再有watch RunResult；不由workflow删除state。
 5. **State loss/expiration**：删除checkpoint artifact、用expired/missing/API-failure fixture或从新ref运行造成restore miss；仍从Zotero成功rebuild。
@@ -541,7 +541,7 @@ P2B只在template仓库，caller第一版就写已合并的`S_P2A`，绝不暂�
 
 - **P2A rollback**：personal caller把`uses` literal改回已知compatible workflow full SHA。旧central commit永久可审计；不移动tag。
 - **P2B rollback**：revert template caller SHA/config commit。已经创建的personal repos不会被template自动改写。
-- **State rollback**：selected prior-run artifact、checkpoint metadata与E4 compatibility共同决定能否复用。旧engine遇到future/incompatible checkpoint丢弃并rebuild；不降级best-effort加载，也不回溯猜另一个artifact。
+- **State rollback**：bounded candidate run metadata、checkpoint自身metadata与E4 compatibility共同决定能否复用。某个candidate缺失/无效时继续检查15-run上限内更旧candidate；旧engine遇到future/incompatible checkpoint丢弃该candidate，耗尽上限后rebuild，不降级best-effort加载。
 - **Output rollback**：GitHub artifacts与E5 output generations immutable；失败run不替换authority。Pages失败不删除private result。
 - **Transport outage/retention**：previous artifact缺失、过期、被删除或Actions API/download失败等同空state；从Zotero重建。30天retention只影响加速，不影响correctness。
 - **Engine invocation crash**：没有合法final RunResult即failure；只上传bounded diagnostics，不save state或publish。

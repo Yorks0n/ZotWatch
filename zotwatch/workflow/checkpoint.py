@@ -44,15 +44,15 @@ class CheckpointContext(_ClosedModel):
 
 
 class CheckpointExpectation(_ClosedModel):
-    engine_repository: str
-    workspace_repository: str
-    workspace_repository_id: int
-    caller_workflow_id: int
-    caller_workflow_path: str
+    engine_repository: str = Field(min_length=3, max_length=256)
+    workspace_repository: str = Field(min_length=3, max_length=256)
+    workspace_repository_id: int = Field(gt=0)
+    caller_workflow_id: int = Field(gt=0)
+    caller_workflow_path: str = Field(min_length=1, max_length=512)
     caller_event: Literal["schedule", "workflow_dispatch"]
-    caller_run_id: int
-    caller_ref: str
-    config_fingerprint_sha256: str
+    caller_run_id: int = Field(gt=0)
+    caller_ref: str = Field(pattern=r"^refs/heads/[A-Za-z0-9._/-]+$")
+    config_fingerprint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class CheckpointEntry(_ClosedModel):
@@ -81,17 +81,17 @@ class CheckpointManifest(_ClosedModel):
     schema_version: Literal[1] = CHECKPOINT_SCHEMA_VERSION
     created_at: str
     source_result_status: Literal["succeeded"]
-    source_engine_run_id: str
-    engine_repository: str
+    source_engine_run_id: str = Field(min_length=1, max_length=128)
+    engine_repository: str = Field(min_length=3, max_length=256)
     engine_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
-    workspace_repository: str
-    workspace_repository_id: int
-    caller_workflow_id: int
-    caller_workflow_path: str
+    workspace_repository: str = Field(min_length=3, max_length=256)
+    workspace_repository_id: int = Field(gt=0)
+    caller_workflow_id: int = Field(gt=0)
+    caller_workflow_path: str = Field(min_length=1, max_length=512)
     caller_event: Literal["schedule", "workflow_dispatch"]
-    caller_run_id: int
-    caller_run_attempt: int
-    caller_ref: str
+    caller_run_id: int = Field(gt=0)
+    caller_run_attempt: int = Field(gt=0)
+    caller_ref: str = Field(pattern=r"^refs/heads/[A-Za-z0-9._/-]+$")
     config_fingerprint_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     state: StateBinding
     entries: tuple[CheckpointEntry, ...]
