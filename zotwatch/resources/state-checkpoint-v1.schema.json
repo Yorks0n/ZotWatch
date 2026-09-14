@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zotwatch.dev/contracts/state-checkpoint-v1.schema.json",
+  "title": "ZotWatch private computational-state checkpoint v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_name", "schema_version", "created_at", "source_result_status",
+    "source_engine_run_id", "engine_repository", "engine_sha",
+    "workspace_repository", "workspace_repository_id", "caller_workflow_id",
+    "caller_workflow_path", "caller_event", "caller_run_id",
+    "caller_run_attempt", "caller_ref", "config_fingerprint_sha256",
+    "state", "entries"
+  ],
+  "properties": {
+    "schema_name": {"const": "zotwatch-state-checkpoint"},
+    "schema_version": {"const": 1},
+    "created_at": {"type": "string", "minLength": 1, "maxLength": 64},
+    "source_result_status": {"const": "succeeded"},
+    "source_engine_run_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "engine_repository": {"type": "string", "minLength": 3, "maxLength": 256},
+    "engine_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "workspace_repository": {"type": "string", "minLength": 3, "maxLength": 256},
+    "workspace_repository_id": {"type": "integer", "minimum": 1},
+    "caller_workflow_id": {"type": "integer", "minimum": 1},
+    "caller_workflow_path": {"type": "string", "minLength": 1, "maxLength": 512},
+    "caller_event": {"enum": ["schedule", "workflow_dispatch"]},
+    "caller_run_id": {"type": "integer", "minimum": 1},
+    "caller_run_attempt": {"type": "integer", "minimum": 1},
+    "caller_ref": {"type": "string", "pattern": "^refs/heads/[A-Za-z0-9._/-]+$"},
+    "config_fingerprint_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "library_identity_sha256", "library_revision", "generation_id",
+        "state_manifest_sha256"
+      ],
+      "properties": {
+        "library_identity_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "library_revision": {"type": "integer", "minimum": 0},
+        "generation_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"},
+        "state_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 6,
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "size_bytes"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "size_bytes": {"type": "integer", "minimum": 0, "maximum": 2147483648}
+        }
+      }
+    }
+  }
+}

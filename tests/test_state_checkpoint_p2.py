@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+import jsonschema
 
 from src.build_profile import ProfileBuilder
 from zotwatch.workflow.checkpoint import (
@@ -71,6 +72,11 @@ def test_checkpoint_round_trip_is_bounded_to_current_generation(
     assert (target / "profile.sqlite").is_file()
     assert (target / "computational/current.json").is_file()
     assert not (target / "runs").exists()
+    schema = json.loads(
+        (Path(__file__).parents[1] / "zotwatch/resources/state-checkpoint-v1.schema.json")
+        .read_text(encoding="utf-8")
+    )
+    jsonschema.validate(json.loads((bundle / "checkpoint.json").read_text()), schema)
 
 
 def test_checkpoint_rejects_tampering_without_mutating_target(
