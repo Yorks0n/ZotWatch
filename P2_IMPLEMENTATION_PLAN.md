@@ -2,7 +2,9 @@
 
 日期：2026-09-12
 
-状态：**待审阅；只完成 implementation plan，尚未修改 production workflow 或 workspace template。**
+本次修订：2026-09-14
+
+状态：**整体批准；已按审阅意见修订 private artifact transport、Pages 权限域与 central repository visibility；尚未修改 production workflow 或 workspace template。**
 
 Engine 起点：`v2-e5-baseline` / `c439bb9046b8c863b12348de8e90e735017ba7e3`。
 
@@ -22,7 +24,7 @@ P2 分成两个严格顺序的 PR，不让两个仓库通过 branch/tag 浮动�
 
 最终再在 ZotWatch 增加只含 sanitized evidence 的 `P2_RESULT.md`，记录 `S_P2A`、`S_TEMPLATE`、Actions run URLs/IDs 和验收结论；该记录提交可标记 `v2-p2-baseline`。P2B caller 仍固定可执行 workflow 的 `S_P2A`，不会因为结果文档提交而漂移。
 
-P2 的完成条件是：两个相互独立、默认 private 的 personal workspaces 仅配置 `ZOTERO_USER_ID` 与 `ZOTERO_API_KEY`，可从空 state 及恢复 state 执行 Basic v2 watch，得到 E5 `run-result-v1`、private manifest、RSS、HTML、recommendation JSON，并证明 state/secret/publication 隔离及 full-SHA 回滚。
+P2 的完成条件是：两个相互独立、默认 private 的 personal workspaces 仅配置 `ZOTERO_USER_ID` 与 `ZOTERO_API_KEY`，可从空 state 及 private checkpoint artifact 恢复 state 执行 Basic v2 watch，得到 E5 `run-result-v1`、private manifest、RSS、HTML、recommendation JSON，并证明 state/secret/publication 隔离及 full-SHA 回滚。
 
 ## 2. 已有实现审计与 P2 边界
 
@@ -59,9 +61,8 @@ P2A 新增公开可调用的 `.github/workflows/run.yml`，只响应 `workflow_c
 | `full-rebuild` | boolean / `false` | `profile` 时执行 `profile --full`；`run` 时先执行独立 `profile --full --machine-result`，成功后再执行普通 `watch --machine-result`；`validate` 时必须 false。绝不由 shell 删除 SQLite/FAISS。 |
 | `request-id` | string / empty | 可选 UUID correlation ID；空值由 `${github.run_id}-${github.run_attempt}` 形成 opaque correlation。不会进入 config、credential routing 或 engine run ID。 |
 | `expected-config-sha` | string / empty | 可选 caller Git blob SHA。checkout 后、任何 engine/model/network side effect 前，以 `git rev-parse HEAD:zotwatch.yaml` 比较；不符返回 `CONFIG_REVISION_MISMATCH`。 |
-| `publish-pages` | boolean / `false` | Pages 的第二重显式 opt-in；只有它与 v2 `outputs.publish=true` 同时成立才进入独立 Pages job。 |
 
-P2 v1 不加入 `engine-ref`、任意 command、arbitrary path、public Supabase key、provider endpoint/header、env name 或 Secret name input。Draft 中的 `validate-credentials` / provider selector 暂不进入 P2：E5 只有显式 Zotero verification，所有 AI adapters 仍 unimplemented。以后增加时必须单独版本化，而不是让 workflow 拼任意探测请求。
+`run.yml` 不含 Pages input。P2 v1 不加入 `engine-ref`、任意 command、arbitrary path、public Supabase key、provider endpoint/header、env name 或 Secret name input。Draft 中的 `validate-credentials` / provider selector 暂不进入 P2：E5 只有显式 Zotero verification，所有 AI adapters 仍 unimplemented。以后增加时必须单独版本化，而不是让 workflow 拼任意探测请求。
 
 ### 3.2 `workflow_call.secrets`
 
@@ -84,7 +85,7 @@ P2 v1 不加入 `engine-ref`、任意 command、arbitrary path、public Supabase
 
 Template Basic caller 只显式映射两个 Zotero secrets，绝不使用 `secrets: inherit`。Preset/Custom slots 只有用户启用相应 feature 并明确编辑 caller 后才逐项映射；E2 unimplemented adapter 仍会由 E5 preflight 报 capability unavailable，不会因 Secret 存在而变成 executable。
 
-Secrets 只在 engine execution step 通过固定 `env:` 名注入。checkout、identity verification、dependency installation、cache restore、artifact/Pages steps 不接收这些 env，也不 dump contexts。
+Secrets 只在 engine execution step 通过固定 `env:` 名注入。checkout、identity verification、dependency installation、prior checkpoint discovery/download、artifact/Pages steps 不接收这些 env，也不 dump contexts。
 
 ### 3.3 Outputs
 
@@ -98,11 +99,30 @@ Reusable workflow 输出只含 closed、sanitized 值：
 | `engine-sha` | 已核验的 `job.workflow_sha` |
 | `manifest-artifact-id` | private operational artifact 的 GitHub artifact ID；未上传则空 |
 | `report-artifact-id` | publishable recommendation artifact 的 GitHub artifact ID；无成功 output 则空 |
-| `publication-url` | Pages 成功才有，否则空 |
+| `publish-requested` | engine-owned sanitized config inspection 得出的 `true/false`；只供独立 Pages caller job 做第二重校验 |
 
 Full rebuild + run 会产生两个不同的 engine RunResults/manifests：profile result 保存在 private operational artifact 中，最终 reusable `result-status/run-id` 取 watch RunResult。Profile 失败时不执行 watch，输出 profile failure。不得把 correlation `request-id` 冒充其中任一 `run_id`。
 
-## 4. Exact checkout 与 identity model
+### 3.4 Separate Pages reusable workflow
+
+P2A 如提供 central Pages glue，使用另一个纯部署 contract：`.github/workflows/publish-pages.yml`。它不接收 Zotero/provider secrets，也不执行 engine recommendation。Typed inputs 仅允许：
+
+- `run-id`；
+- `manifest-artifact-id`；
+- `report-artifact-id`；
+- `expected-engine-sha`。
+
+这些值必须直接来自同一个 caller workflow run 中 `run.yml` 的 outputs，不能暴露成 `workflow_dispatch` 自由输入。`publish-pages.yml` 验证两个 artifact ID 都属于当前 `github.repository_id` / `github.run_id`，machine result 与 private manifest 的 run ID 和 engine SHA 匹配，report files 正好等于其中的 publishable immutable whitelist。它输出 `publication-url`；任一 mismatch 都不部署。
+
+## 4. Central visibility、exact checkout 与 identity model
+
+### 4.1 P2 v1 visibility precondition
+
+P2 v1 明确要求 `Yorks0n/ZotWatch` central reusable-workflow/engine repository 保持 **public**。Private personal caller 因此可以按 full SHA 调用 central reusable workflow，并从同一个 public repository checkout exact engine commit，不需要 caller-owned PAT、GitHub App installation token 或其他 cross-repository credential。GitHub 的 reusable workflow access matrix允许 private caller使用public workflow；private central repository则需要另行配置access policy：<https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#access-to-reusable-workflows>。
+
+P2A merge gate 与 two-workspace smoke 都记录 central repository visibility。若 central ZotWatch 以后改成 private，现有 P2 v1 authentication assumption 即失效，必须暂停升级并单独设计/审阅 repository access、scoped token issuance、outside collaborator visibility 和 checkout authentication。P2 不假设 caller `GITHUB_TOKEN` 能读取任意 private central repository，也不预留 PAT/App-token input。
+
+### 4.2 Checkout and assertion
 
 Caller checkout 必须是：
 
@@ -142,17 +162,16 @@ Template caller 的 `uses:` 必须是字面量 `Yorks0n/ZotWatch/.github/workflo
 
 Reusable workflow 不能提升 caller 的 `GITHUB_TOKEN` 权限，因此 template caller 和 callee job 都写明最小权限。GitHub 对 called workflow 的权限只能保持或下调：<https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations>。
 
-| Path/job | Repository token permissions | Cache access | 说明 |
-| --- | --- | --- | --- |
-| Basic compute/validate | `contents: read`，其他 none | `validate`: none；trusted run/profile: write | read 用于 caller/central checkout；无需 contents、PR、workflow 或 administration write。 |
-| State restore | 不额外增加 repo write scope | read | 只读 caller repository/ref scoped cache。Miss/error 进入 rebuild。 |
-| State save | 不额外增加 repo write scope | write，仅 trusted `schedule/workflow_dispatch` 且 finalized `succeeded` | 使用 GitHub cache service scoped token；低信任 trigger 不允许写。 |
-| Private/report artifact upload | `contents: read` | none beyond preceding compute need | `upload-artifact` 使用 run-scoped artifact service；不写 Git。P2A hosted-runner test确认无需扩大 repo scopes。 |
-| Optional Pages job | `contents: read`, `pages: write`, `id-token: write` | none | 只在双 opt-in 后运行；权限仅在独立 job。 |
+| Path/job | Repository token permissions | 说明 |
+| --- | --- | --- |
+| Default Basic caller + `run.yml` compute/validate | `contents: read`, `actions: read`，其他 none | contents read 用于两个checkout；actions read用于精确查询/下载prior private checkpoint。无需 contents、PR、workflow、administration、Pages或OIDC write。 |
+| Prior state discovery/download | `actions: read` | GitHub REST 的list workflow runs、list run artifacts、download artifact均由此读取当前private caller repo。官方REST文档对run/artifact读取要求Actions read：<https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow>、<https://docs.github.com/en/rest/actions/artifacts#download-an-artifact>。 |
+| Current checkpoint/report/private artifact upload | `contents: read`, `actions: read` | `upload-artifact`使用run-scoped artifact service，不提交Git。P2A hosted-runner gate确认在该声明下上传成功，不为上传扩大repository write scopes。 |
+| Opt-in caller Pages job + `publish-pages.yml` | `contents: read`, `actions: read`, `pages: write`, `id-token: write` | actions read只下载当前run的exact artifact IDs；Pages/OIDC权限只存在于这个单独reusable invocation。 |
 
-P2A 将按当前 GitHub.com workflow syntax 显式设置 `cache-mode`：compute run/profile 为 `write`，validate 与 Pages 为 `none`。缓存安全文档明确警告不能在 low-trust trigger 打开 write，因此 reusable workflow 还要先校验 event allowlist：<https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#controlling-cache-access-with-cache-mode>。
+`.github/workflows/run.yml` 的YAML不得声明、请求或引用 `pages: write`、`id-token: write`、Pages environment和Pages actions。Default P2B caller也不包含Pages job，因此Pages disabled时整个ordinary recommendation permission graph只有`contents: read`与`actions: read`，不存在conditional skipped publish/OIDC权限。
 
-Default P2B workflow只给 call job `contents: read`，不授予 Pages scopes，且 `publish-pages=false`。README 的 Pages opt-in patch 同时修改 config、input 和 caller permissions；Basic 用户永久不承担发布权限。
+Pages opt-in 是用户明确编辑caller后新增的第二个job：该job `needs` compute，使用同一个`S_P2A` full SHA调用`publish-pages.yml`，并只把compute outputs传给它。只有这个job声明Pages/OIDC scopes。Basic用户永久不承担发布权限。
 
 ## 6. State transport decision record
 
@@ -160,43 +179,37 @@ Default P2B workflow只给 call job `contents: read`，不授予 Pages scopes，
 
 | 方案 | 优点 | 风险/成本 | 决定 |
 | --- | --- | --- | --- |
-| A. Actions cache | 自动按 caller repo/ref 隔离；prefix 可恢复最近 entry；miss/eviction 天然回退 rebuild；不需 API 查询 previous run | immutable key 设计不当会重现旧 stale bug；不是长期存档；必须防 PR poisoning | **选作唯一自动 state restore transport** |
-| B. Previous successful workflow artifact | 明确保留期和可见 checkpoint，可作审计/手动恢复 | 需 Actions API 找 previous successful run/artifact、处理权限/分页/retention；容易把“latest filename”猜测引回 workflow；与 recommendation artifacts 生命周期混杂 | P2 不用作自动 state restore |
-| C. Hybrid | 可兼顾 acceleration 和 long-lived debug | 两套 authority、两套 retention/restore/test，当前没有 correctness 收益 | P2 不采用 |
+| A. Actions cache | 自动restore方便，适合依赖/model downloads | Cache按branch/tag而非workflow identity共享；某些PR可读base/default branch cache。`profile.sqlite`含personal Zotero metadata，importer只能防poisoning，不能防disclosure | **禁止用于任何Zotero-derived personal state** |
+| B. Previous successful private workflow artifact | Artifact属于private caller repo/run；可精确绑定workflow/run/event/conclusion/name/id；有显式retention与expired状态 | 需要bounded REST discovery与actions read；缺失/过期时必须rebuild | **选作唯一automatic computational-state transport** |
+| C. Hybrid personal-state transport | 两套restore authority | 增加disclosure面和选择歧义，没有correctness收益 | 不采用 |
 
-Recommendation/public/private operational outputs 仍用 workflow artifacts；这里只是不把 computational checkpoint 同时复制为 workflow artifact。Cache 永远只是可丢失的 acceleration，不是 durable authority。
+GitHub明确建议cache不要保存sensitive information，因为能发起PR的人可能读取base branch cache：<https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#best-practices-for-using-caches-securely>。Actions cache在P2仍可用于不含用户数据的Python dependency/model download acceleration，但cache paths和keys必须由central workflow静态定义，并明确排除workspace、state、reports与checkpoint staging。
 
-### 6.2 Key scheme
+### 6.2 Structured prior-run discovery
 
-Workflow 先从 immutable caller identity计算 `ref_fingerprint = SHA-256(github.ref)`。Cache namespace：
+Checkpoint artifact使用固定versioned name `zotwatch-state-checkpoint-v1`，不是caller input。Restore按以下closed流程执行：
 
-```text
-zotwatch-state-v1-<github.repository_id>-<ref_fingerprint>-
-```
+1. 要求caller repository是private、当前event是`schedule`或`workflow_dispatch`、当前ref是branch；不满足时`run/profile`在Secret注入前fail closed，`validate`不做state discovery。
+2. 使用当前caller `GITHUB_TOKEN`和literal `https://api.github.com`读取`GET /repos/{github.repository}/actions/runs/{github.run_id}`，验证repository ID、caller workflow ID/path、head branch/ref、current event与GitHub contexts一致。
+3. 对这个exact caller workflow ID查询runs，固定当前branch、`status=success`、bounded page size；在返回中只接受`status=completed`、`conclusion=success`、event属于trusted allowlist、head repository ID等于caller repository ID、且早于当前run的记录。
+4. 确定其中newest exact run后停止选择。不会跨workflow、跨ref、跨repository，也不会在该run无checkpoint时继续回溯更旧run。
+5. 对该exact run调用list workflow run artifacts，只接受恰好一个未过期、名字exact为`zotwatch-state-checkpoint-v1`、artifact workflow-run/repository metadata匹配的条目。
+6. 以返回的numeric artifact ID精确下载到独立staging。下载action/API不接受caller input的artifact name、ID、repository或run ID。
+7. 验证GitHub artifact digest（若API提供）并运行checkpoint importer。任一API status、pagination bound、metadata、archive、schema、hash、path、repo/ref/config/library/state validation失败，都删除staging并作为restore miss从Zotero rebuild。
 
-本轮 primary save key：
+GitHub REST允许按workflow、branch、event/status筛选runs，并要求Actions read；artifact API可从exact run列出和按ID下载：<https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow>、<https://docs.github.com/en/rest/actions/artifacts#list-workflow-run-artifacts>。
 
-```text
-<namespace><github.run_id>-<github.run_attempt>
-```
+“GitHub run成功”不是单独的checkpoint trust proof。`run.yml`只在final E5 result `status == succeeded`、exit code 0、identity/config/result/checkpoint validation全部通过时上传固定name checkpoint；`degraded`虽可保留recommendation/private result，却不上传checkpoint。Importer还要求`checkpoint.json.source_result_status == succeeded`并匹配selected run。因此failed/degraded/untrusted run不能成为state source。若newest matching GitHub-success run没有checkpoint，restore miss并rebuild，不猜测另一个run。
 
-Restore 使用一个不可能预先存在的本轮 primary key，并只给同 namespace 的 `restore-keys` prefix。GitHub 在多个 prefix matches 中返回最近创建的 entry：<https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#cache-key-matching>。
+### 6.3 Current successful checkpoint upload and retention
 
-每次成功 run 的 key 都唯一，所以不存在 monthly exact hit 后 cache action 拒绝保存更新的问题。不同 repository ID 或 ref fingerprint 永远没有共同 prefix。Cache version 还绑定固定 checkpoint path/compression，但它不替代 bundle schema validation。
+Engine/watch成功且SQLite关闭后导出validated checkpoint，随后以固定name `zotwatch-state-checkpoint-v1`上传到**当前private caller run**，`retention-days`固定为30（受repository policy上限约束）。Workflow rerun若同run已有该name，只允许在本次succeeded checkpoint完成验证后用upload-artifact的reviewed overwrite语义替换当前run内同名artifact；绝不修改previous run artifact。
 
-只在以下条件全满足时运行 standalone cache save：
-
-- event 是 `schedule` 或 `workflow_dispatch`；
-- identity/config/result/checkpoint validations 全部通过；
-- final E5 result `status == succeeded` 且 exit code 0；
-- checkpoint export 成功；
-- 本轮不是 pull request/fork/untrusted dispatch shim。
-
-`degraded` 可以上传已有 private/public results，但不更新 reusable checkpoint。Failed/invocation-crash/Pages-only job 不保存。Cache 被 eviction、restore timeout、下载损坏或没有命中时，删除 restore staging，使用空 state 正常从 Zotero rebuild。
+Artifact expiration、retention policy缩短、API rate/error、download failure或用户删除artifact都等价于restore miss。State仍是rebuildable acceleration；没有artifact不会改变correctness。Recommendation、private operational与state checkpoint artifacts使用不同固定name/payload boundaries。
 
 ## 7. Bounded checkpoint/state bundle v1
 
-Workflow 不直接缓存 live `state/`。Engine 新增 checkpoint exporter/importer，由它理解 E3/E4 layout：
+Workflow 不直接上传 live `state/`。Engine 新增 checkpoint exporter/importer，由它理解 E3/E4 layout：
 
 ```text
 checkpoint-v1/
@@ -234,9 +247,15 @@ schema_name = zotwatch-state-checkpoint
 schema_version = 1
 created_at
 source_run_id
+source_result_status = succeeded
 engine_repository
 engine_workflow_sha
 workspace_repository_id
+caller_workflow_id
+caller_workflow_path
+caller_event
+caller_run_id
+caller_run_attempt
 workspace_ref_sha256
 config_fingerprint_sha256
 library_identity_sha256            # pseudonymous identity fingerprint
@@ -246,11 +265,11 @@ state_manifest_sha256
 entries[] = {relative_path, role, sha256, size_bytes}
 ```
 
-Metadata 不写 raw Zotero ID、item payload、absolute paths 或 secrets。`entries` 是固定 role/path allowlist，有 file-count/individual-size/total-size 上限；import 拒绝 path traversal、absolute path、symlink/hardlink/device、duplicate path、未知 role、hash/size mismatch、future schema、wrong repository/ref namespace。
+Metadata 不写 raw Zotero ID、item payload、absolute paths 或 secrets。`entries` 是固定 role/path allowlist，有 file-count/individual-size/total-size 上限；import 拒绝 path traversal、absolute path、symlink/hardlink/device、duplicate path、未知 role、hash/size mismatch、future schema、wrong repository/ref/workflow/run namespace。
 
 Exporter 在 official engine run 完成、SQLite 关闭后获取一个短生命周期 E4 state lease，使用 SQLite backup 并读取同一个 current generation，验证 manifest/hash 后才原子发布 bundle staging。它不嵌套 official `watch` 的 run-level lease，因为 watch 已返回并释放 lease。
 
-Importer 将 restored cache 当不可信字节：先在独立 staging 做 schema/path/hash/SQLite integrity/current-generation 验证，成功才装入新的 state root。E3/E4 在 run 中仍进行自己的 library/model/config/revision compatibility validation；checkpoint validation 绝不取代它。任何 mismatch/corrupt/future state 都丢弃整个 restore 并从 Zotero rebuild，不 silent fallback 到 stale generation。
+Importer 将 downloaded private artifact 当不可信字节：先在独立 staging 做 schema/path/hash/SQLite integrity/current-generation 验证，成功才装入新的 state root。E3/E4 在 run 中仍进行自己的 library/model/config/revision compatibility validation；checkpoint validation 绝不取代它。任何 mismatch/corrupt/future state 都丢弃整个 restore 并从 Zotero rebuild，不 silent fallback 到 stale generation。
 
 ## 8. Concurrency model
 
@@ -261,11 +280,11 @@ group = zotwatch-<github.repository_id>-<github.workflow>-<github.ref>
 cancel-in-progress = false
 ```
 
-它将同 personal workspace/workflow/ref 的 schedule 与 manual runs 排队，避免同时更新同一个 cache namespace/output stream。不同 repository ID 天然隔离；不同 ref 也隔离。
+它将同 personal workspace/workflow/ref 的 schedule 与 manual runs 排队，避免两个run同时选择previous checkpoint并发布竞争的current checkpoint/output stream。不同 repository ID 天然隔离；不同 ref 也隔离。
 
 E4 local file lease继续保护单个 runner/process 的 SQLite → generation → ranking一致性，以及 standalone engine API。GitHub concurrency保护跨 workflow run，不能替代 file lease；file lease也不能协调两个 runners，二者各自保留。
 
-Template 不触发 `pull_request`、`pull_request_target`、fork push 或普通 source push recommendation。若用户以后自行增加低信任 trigger，reusable workflow 的 event guard 会在 cache restore、secret injection 和 engine execution 前拒绝它，而不是依赖 GitHub token 降权后继续。
+Template 不触发 `pull_request`、`pull_request_target`、fork push 或普通 source push recommendation。若用户以后自行增加低信任 trigger，reusable workflow 的 event guard 会在 prior-run/artifact discovery、secret injection 和 engine execution 前拒绝它，而不是依赖 GitHub token 降权后继续。
 
 ## 9. Machine-result consumption
 
@@ -285,25 +304,23 @@ Full rebuild + run 分别保存 `profile-machine-result.json` 和 `watch-machine
 
 ### 10.1 Private Actions artifacts
 
-成功或 degraded run 产生两个逻辑 artifact；artifact 名含 caller repository ID、ref fingerprint、engine run ID，retention 天数在 workflow 中显式设置并受 repo policy 上限约束：
+成功或 degraded run 产生recommendation/private operational artifacts；只有succeeded run再产生state checkpoint。Retention在workflow中显式设置并受repo policy上限约束：
 
 - **Publishable recommendation artifact**：只含 materialized `recommendations.json`、`feed.xml`、`report.html` 中 RunResult 实际声明且 `publishable=true` 的文件。上传清单完全来自 RunResult，不额外发明 publishable 文件；原 immutable generation reference 与 hash 保留在 private machine result/manifest 供审计。
 - **Private operational artifact**：最终 machine result、其 private run manifest；full rebuild 时再含 profile machine result/manifest；可选 bounded/redacted stderr。它不含 SQLite/FAISS/items/config/secrets。
+- **Private state checkpoint artifact**：固定name `zotwatch-state-checkpoint-v1`；只含第7节的bounded bundle；仅final `succeeded` trusted run上传，retention 30天。它包含personal Zotero-derived state，依赖caller repository为private，绝不作为Pages输入。
 
-Checkpoint 只进 caller repo/ref scoped cache，不上传为 artifact。Artifact 上传动作只接收 validator 创建的明确 staging 目录，不接收整个 `reports/`、`state/`、workspace 或 glob wildcard。
+三个上传动作只接收各自validator/exporter创建的明确staging目录，不接收整个`reports/`、`state/`、workspace或glob wildcard。Artifact IDs作为current run outputs精确传递；后续不按name扫描当前文件系统。
 
-### 10.2 Optional Pages
+### 10.2 Optional Pages in a separate permission domain
 
-Pages 是独立 conditional job，条件同时要求：
+Default template不包含Pages caller job。用户显式opt-in时同时完成两项reviewable改动：config设置`outputs.publish=true`，caller新增第二个job并以同一`S_P2A`调用`publish-pages.yml`。第二个job的条件还要求compute output `publish-requested=true`、final watch RunResult合法且两个current-run artifact IDs非空。
 
-- `publish-pages=true`；
-- config 的 `outputs.publish=true`，由 engine-owned sanitized inspection result 确认；
-- final watch RunResult 合法并有 publishable artifacts；
-- private compute/artifact upload 已经完成。
+`publish-pages.yml`只用`actions: read`下载**当前caller run**的exact manifest/report artifact IDs。它重新验证machine result/private manifest声明的publishable immutable whitelist，再建立只含E5 RSS/HTML/JSON的Pages staging。禁止`.zotwatch-output` metadata、state checkpoint、run manifest、machine result、state、config、logs和credentials进入Pages payload。
 
-Pages staging 从 publishable artifact/materialized whitelist 建立，只可含 E5 声明的 RSS/HTML/JSON。禁止 `.zotwatch-output` metadata、run manifest、machine result、state、config、logs 和 credentials。Pages job 使用官方 configure/upload/deploy actions 的 full SHA，且只在该 job 取得 `pages: write`/`id-token: write`。官方 Pages 示例需要这两个权限：<https://docs.github.com/en/get-started/start-your-journey/deploying-your-website-automatically>。
+Pages reusable使用官方configure/upload/deploy actions的full SHA，且其caller/callee job才取得`pages: write`/`id-token: write`。纯compute `run.yml`不含这些scopes或actions。官方Pages示例需要这两个deployment权限：<https://docs.github.com/en/get-started/start-your-journey/deploying-your-website-automatically>。
 
-Pages entitlement/policy/deployment 失败不会删除已上传 private recommendation artifact 或已保存成功 state；`publication-url` 保持空并明确标记 publication job failure。P2 不增加“strict publication 导致 recommendation 回滚”的语义。Private repository 也不被描述为 private Pages 保证，README 要求用户理解其 GitHub plan/repository policy。
+Pages entitlement/policy/deployment失败不会删除已上传private recommendation/operational/checkpoint artifacts；`publication-url`保持空并明确标记deployment failure。P2不增加“strict publication导致recommendation回滚”的语义。Private repository也不被描述为private Pages保证，README要求用户理解其GitHub plan/repository policy。
 
 ## 11. Runtime and dependency reproducibility audit
 
@@ -323,7 +340,7 @@ P2A采用限定到GitHub-hosted `ubuntu-22.04` + CPython `3.11.11`的最小 repr
 
 不承诺不同CPU/BLAS的bit-identical float结果；E4 hard compatibility依赖stable model/artifact/ABI语义，不hash raw float32 probe。P2只封住明显dependency/model漂移，不引入新包管理系统。
 
-所有第三方Actions（checkout、setup-python、cache restore/save、upload/download-artifact、Pages actions）在production YAML中固定40-char commit SHA，并在注释记录upstream release。`tests/fixtures/p2/action-pins.json`维护action path、SHA、reviewed release/date。Static gate拒绝`@main`、`@vN`和非40-hex引用。升级由Dependabot或人工独立PR提出，审阅upstream changelog/permissions，过central contract与two-workspace canary后生成新P2A SHA，再由template独立PR更新caller SHA；绝不移动旧tag/ref来升级现有用户。
+所有第三方Actions（checkout、setup-python、upload/download-artifact、Pages actions，以及如启用的non-personal dependency/model cache action）在production YAML中固定40-char commit SHA，并在注释记录upstream release。`tests/fixtures/p2/action-pins.json`维护action path、SHA、reviewed release/date。Static gate拒绝`@main`、`@vN`和非40-hex引用。升级由Dependabot或人工独立PR提出，审阅upstream changelog/permissions，过central contract与two-workspace canary后生成新P2A SHA，再由template独立PR更新caller SHA；绝不移动旧tag/ref来升级现有用户。
 
 ## 12. Thin workspace template contract
 
@@ -352,9 +369,9 @@ Default `zotwatch.yaml` 是Basic schema v2：
 `.github/workflows/watch.yml` 只负责：
 
 - `schedule` 和 `workflow_dispatch` triggers；
-- manual inputs `mode`、`full-rebuild` 和 Pages opt-in（默认 false）；
+- manual inputs `mode`、`full-rebuild`；
 - repository/ref-scoped concurrency 且 `cancel-in-progress:false`；
-- `contents: read` default permissions；
+- `contents: read`, `actions: read` default permissions；
 - call `run.yml@S_P2A`；
 - 显式传两个Zotero secrets。
 
@@ -367,7 +384,7 @@ README onboarding主路径只有：
 3. 添加`ZOTERO_API_KEY`；
 4. 启用/手动运行Actions。
 
-不要求Supabase/AI Secret。Advanced区再说明Pages双opt-in、provider fixed slots、full-SHA升级/回滚；不要求普通用户理解service或engine internals。
+不要求Supabase/AI Secret。Advanced区再说明provider fixed slots、full-SHA升级/回滚；不要求普通用户理解service或engine internals。Pages说明提供一个明确的opt-in patch：修改`outputs.publish=true`并新增第二个caller job，以同一`S_P2A`调用`publish-pages.yml`，只在该job授予`contents: read`, `actions: read`, `pages: write`, `id-token: write`。Default template本身不含该job或这些权限。
 
 `.gitignore`覆盖state/reports/checkpoint/env/SQLite WAL/FAISS/embedding/profile/run manifests等private/rebuildable文件，即使用户本地运行也不能被默认`git add .`纳入。Contract gate另外以allowlist确认template Git tree没有这些文件；`.gitignore`本身不是唯一安全边界。
 
@@ -376,14 +393,17 @@ README onboarding主路径只有：
 | Threat | P2 control |
 | --- | --- |
 | Central repo获得个人Secret | Reusable workflow在caller run/context执行；Secret只存caller repository并逐项传递。Central CI没有个人Zotero credentials。 |
+| Central repo以后变private | P2 v1以public visibility为显式precondition，不带PAT/App-token fallback；visibility变更必须重新审阅cross-repo access/authentication。 |
 | Caller pin被branch/tag移动 | Template `uses`只接受P2A full SHA；identity assertion比较job SHA与engine HEAD。 |
 | Checkout token残留 | 两次checkout均`persist-credentials:false`；无git push。 |
 | Arbitrary Secret/env lookup | Workflow declarations与E2 registry exact-match；config不能提供名称；不用`secrets: inherit`。 |
-| PR/fork cache poisoning或Secret exfiltration | Template无PR类trigger；callee只接受schedule/dispatch；untrusted path不restore/writecache也不注入Secret。 |
+| PR/fork读取personal mirror或Secret exfiltration | Zotero-derived state不进入cache；template无PR类trigger；callee只接受schedule/dispatch；untrusted path不查询/download private artifact也不注入Secret。 |
 | Workspace代码遮蔽engine package | engine独立venv/install，工作目录和`PYTHONPATH`不含workspace；只把workspace作为data/config path。 |
-| Malicious/corrupt restored cache | bundle path/hash/size/schema/namespace validation + SQLite/E3/E4 validation；失败删除并rebuild。 |
-| Cross-workspace state leak | cache key含GitHub numeric repository ID；artifacts属于caller repo/run；metadata再次绑定repo/ref。 |
+| Wrong/malicious/corrupt restored artifact | REST先绑定caller workflow/ref/trusted successful exact run和fixed name/ID；bundle path/hash/size/schema/namespace validation + SQLite/E3/E4 validation；失败删除并rebuild。 |
+| Cross-workspace state leak | Artifact属于private caller repo/run；REST metadata与checkpoint再次绑定numeric repository ID、workflow、ref和run；只有caller `actions: read`。 |
+| Private artifact被repository成员读取 | Checkpoint不是加密vault；其可见性跟随private repository的Actions access。Onboarding明确要求private repo并提醒只授予可信成员read access；public caller的run/profile在上传前fail closed。 |
 | Private files进入Pages | Pages只消费RunResult-derived publishable staging allowlist；拒绝glob/whole-directory upload。 |
+| Compute获得publish/OIDC权限 | `run.yml`和default caller不声明Pages/OIDC；只有用户新增的second caller job可调用独立`publish-pages.yml`。 |
 | Secrets进入logs/artifacts | 不printcontexts/env；closed sanitized errors；diagnostic redaction/size limit；privacy tests用canary values扫描全部staging。 |
 | Central dependency/action supply-chain drift | engine/workflow/action/model/runtime exact pins与independent upgrade PR。 |
 
@@ -396,9 +416,11 @@ Public candidate pool endpoint/publishable key继续由packaged engine resource�
 预计新增/修改：
 
 - `.github/workflows/run.yml` — reusable workflow production contract；
+- `.github/workflows/publish-pages.yml` — separate optional Pages reusable contract；
 - `.github/workflows/packaging.yml` 或独立`.github/workflows/p2-contract.yml` — offline/static gates，不含个人Secret；
 - `zotwatch/workflow/identity.py` — repo/SHA/checkout assertion；
 - `zotwatch/workflow/checkpoint.py` — bounded export/import与schema validation；
+- `zotwatch/workflow/github_artifacts.py` — fixed GitHub.com prior-run/artifact discovery与metadata validation；
 - `zotwatch/workflow/results.py` — E5 RunResult validation/materialization；
 - `zotwatch/workflow/__init__.py`与最小CLI wiring；
 - `zotwatch/resources/state-checkpoint-v1.schema.json`；
@@ -407,6 +429,7 @@ Public candidate pool endpoint/publishable key继续由packaged engine resource�
 - `tests/test_workflow_identity_p2.py`；
 - `tests/test_workflow_contract_p2.py`；
 - `tests/test_state_checkpoint_p2.py`；
+- `tests/test_github_artifact_transport_p2.py`；
 - `tests/test_workflow_results_p2.py`；
 - `tests/test_workflow_security_p2.py`；
 - `tests/fixtures/p2/`中的RunResult/checkpoint/action-pin/static caller fixtures；
@@ -432,24 +455,30 @@ Template验证工具优先留在central P2 contract tests与private acceptance h
 | Correct job repo/full SHA/HEAD | identity passes and emits same SHA |
 | Missing/malformed SHA, wrong repo, wrong HEAD | fail closed before install/secrets/network |
 | Caller and engine SHAs deliberately differ | engine executes job workflow SHA checkout |
+| Central visibility | public `Yorks0n/ZotWatch` recorded; no PAT/App-token input or private-repo fallback |
 | Safe config root/blob SHA | exact Git blob accepted；mismatch/symlink/other path rejected before side effects |
 | Registry ↔ workflow secrets | exact set match；no broad/unregistered names；no `secrets: inherit` |
 | Action refs | every external `uses` is 40-char SHA and in reviewed pins fixture |
-| Event/permission lint | no PR trigger; no contents/PR/workflow/admin write incompute; Pages scopes only Pages job |
-| Cache namespace | unique save key; same repo/ref prefix restore; A/B and refs cannot collide |
-| First restore miss | empty state path proceeds to rebuild |
+| Compute permission lint | default caller/`run.yml` only contents/actions read; no PR trigger, Pages/OIDC or write scopes |
+| Pages permission lint | Pages scopes/actions exist only in separate `publish-pages.yml` and explicit second caller job fixture |
+| Prior-run selection | exact caller workflow/repository/ref; newest older completed success; only schedule/dispatch |
+| Prior-run rejection | failed/cancelled/degraded-marker/PR/wrong repo/workflow/ref/current run cannot supply state |
+| Artifact selection | exact selected run + fixed name + one unexpired artifact + numeric ID; no caller-supplied selector |
+| Artifact/API miss | no prior run, missing/expired/duplicate artifact, pagination bound or API/download failure rebuilds |
+| No personal cache | no cache path can contain profile.sqlite/computational/checkpoint/workspace/reports |
+| First restore miss | empty state path proceeds to rebuild and uploads checkpoint only after succeeded result |
 | Valid checkpoint export/import | SQLite revision and E4 current generation preserved |
 | Checkpoint corrupt/stale/future/cross-repo | rejected and clean rebuild selected |
 | Path traversal/symlink/oversize/credential canary | import or artifact materialization rejected |
 | Bundle bound | exactly SQLite + current pointer/current generation; no runs/cache/history/reports |
-| Valid succeeded RunResult | onlydeclared immutable artifacts materialized; hashes/media verified |
-| Degraded RunResult | private/report artifact allowed; no state save; no Pages by default |
+| Valid succeeded RunResult | only declared immutable artifacts materialized; hashes/media verified; checkpoint uploaded with fixed retention |
+| Degraded RunResult | private/report artifact allowed; no checkpoint upload; cannot become restore source |
 | Failed/missing/truncated/extra stdout result | invocation failure; no state save/publication |
 | Exit/result mismatch | rejected; process 0 alone never implies success |
-| Full rebuild orchestration | full profile thennormal watch; distinct results/manifests; watch is final output |
-| Page whitelist | onlyRSS/HTML/JSON; no hidden/state/config/private files |
-| Secret privacy | canary values absent fromlogs, machine results, manifests, bundles and upload staging |
-| Runtime lock/model revision | exact Python/deps/model revision; offline re-install afterprefetch; E4 descriptor matches pin |
+| Full rebuild orchestration | full profile then normal watch; distinct results/manifests; watch is final output |
+| Page whitelist | only RSS/HTML/JSON from exact current-run artifacts; no hidden/state/config/private files |
+| Secret privacy | canary values absent from logs, machine results, manifests, bundles and upload staging |
+| Runtime lock/model revision | exact Python/deps/model revision; offline re-install after prefetch; E4 descriptor matches pin |
 | Existing gates | E0–E5 characterization, packaging/config/sync/state/result tests unchanged and green |
 
 Workflow syntax/static tests不能代替GitHub execution。P2A PR还要在一个disposable caller fixture通过full-SHA reusable call验证`job.workflow_*`和cross-repo checkout，再合并。
@@ -460,35 +489,40 @@ Workflow syntax/static tests不能代替GitHub execution。P2A PR还要在一个
 
 每个workspace执行并记录sanitized证据：
 
-1. **First manual run**：空cache/state，`mode=run`；E3从Zotero建立mirror，E4建立state，final RunResult有效，得到RSS/HTML/JSON与private manifest。
-2. **Restored-state run**：再次manual run；cache由同repo/ref最新成功unique key恢复，checkpoint/E3/E4验证通过；新RunResult与输出完整。
+1. **First manual run**：没有previous checkpoint artifact，`mode=run`；E3从Zotero建立mirror，E4建立state，final RunResult有效，得到RSS/HTML/JSON、private manifest与固定name private checkpoint artifact。
+2. **Restored-state run**：再次manual run；REST选择同repo/caller workflow/ref的newest completed successful trusted exact run，按exact artifact ID下载checkpoint，importer/E3/E4验证通过；新RunResult与输出完整。
 3. **Scheduled-equivalent run**：同schedule默认inputs执行同一caller path；至少一个真实schedule trigger完成，或在测试窗口先以相同resolved inputs手动canary并随后记录首个schedule。
 4. **Manual full rebuild**：`mode=run, full-rebuild=true`；先有独立profile RunResult/manifest，再有watch RunResult；不由workflow删除state。
-5. **State loss**：删除/改变cache namespace或从新ref运行造成restore miss；仍从Zotero成功rebuild。
-6. **Corrupt/stale restore**：在private acceptance harness写入可识别的bad checkpoint namespace；import明确拒绝，run重建并不使用stale rank state。
-7. **Isolation**：A/B repository IDs、cache namespace、artifact IDs与secrets不同；B无法restore/download A条目，任何metadata identity swap被import拒绝。
+5. **State loss/expiration**：删除checkpoint artifact、用expired/missing/API-failure fixture或从新ref运行造成restore miss；仍从Zotero成功rebuild。
+6. **Corrupt/stale restore**：在private acceptance harness让previous trusted run上传可识别的bad checkpoint artifact；import明确拒绝，run重建并不使用stale rank state。
+7. **Isolation**：A/B repository IDs、workflow/run/artifact IDs与secrets不同；B的`actions: read`无法查询/下载A条目，任何metadata identity swap被import拒绝。
 8. **Git/public audit**：两个Git trees不含SQLite/FAISS/embedding/profile/run manifest/Zotero items；publishable artifact和可选Pages staging不含state/private files/config/credentials。
 9. **Identity audit**：run evidence显示caller SHA、`S_P2A`与checked-out engine HEAD；caller/engine SHA故意不同。
-10. **Rollback**：在canary branch把caller的single full SHA改回prior compatible P2A SHA并成功run；cache不兼容时安全rebuild，之后恢复新SHA。绝不使用tag/branch回滚。
+10. **Pages permission split**：default run的job/token graph无Pages/OIDC；在acceptance branch显式新增second Pages caller job后，只发布exact current-run whitelist，compute artifact/state已先保留。
+11. **Rollback**：在canary branch把caller的single full SHA改回prior compatible P2A SHA并成功run；previous checkpoint不兼容时安全rebuild，之后恢复新SHA。绝不使用tag/branch回滚。
 
-验收记录只保存repo/run URL或ID、commit SHAs、status/error codes、artifact names/hashes、cache hit/miss与privacy assertions；不保存Zotero IDs、items、keys、Custom endpoint/key或rawprivate manifests。
+验收记录只保存repo/run URL或ID、commit SHAs、status/error codes、artifact IDs/names/hashes、restore hit/miss reason与privacy assertions；不保存Zotero IDs、items、keys、Custom endpoint/key或rawprivate manifests。
 
 ## 16. Commit and PR boundaries
 
 ### Plan checkpoint（当前）
 
-单独commit只加入`P2_IMPLEMENTATION_PLAN.md`。不修改production workflow/template，等待审阅。
+Plan-only commits只修改`P2_IMPLEMENTATION_PLAN.md`。不修改production workflow/template；本次transport/permission/visibility修订封板后才建立P2A implementation branch。
 
 ### P2A PR — ZotWatch
 
 建议提交顺序：
 
-1. `test(p2): add failing reusable-workflow and security contracts`
+1. `test(p2): add failing workflow security and checkpoint contracts`
 2. `feat(p2): assert workflow identity and pin runtime/model inputs`
-3. `feat(p2): export and restore bounded state checkpoints`
-4. `feat(p2): validate machine results and materialize artifact whitelists`
-5. `ci(p2): add reusable workflow with cache/artifact/pages boundaries`
-6. `docs(p2): record P2A gates and callable full SHA`
+3. `feat(p2): export and import bounded state checkpoints`
+4. `feat(p2): restore prior successful artifact and upload successful checkpoints`
+5. `feat(p2): validate machine results and materialize artifact whitelists`
+6. `ci(p2): add pure compute reusable workflow`
+7. `ci(p2): add separate optional Pages reusable workflow`
+8. `test(p2): complete offline static and integration gates`
+9. `test(p2): record disposable cross-repository caller smoke`
+10. `docs(p2): record P2A gates and callable full SHA`
 
 各commit只在ZotWatch。P2A merge前运行E0–E5 full gates、P2 offline/static/integration gates、disposable cross-repo caller smoke。合并后以merge commit full SHA作为`S_P2A`，可打annotated `v2-p2a-baseline`。此时workflow已可独立调用，但还没有正式template pin。
 
@@ -507,13 +541,13 @@ P2B只在template仓库，caller第一版就写已合并的`S_P2A`，绝不暂�
 
 - **P2A rollback**：personal caller把`uses` literal改回已知compatible workflow full SHA。旧central commit永久可审计；不移动tag。
 - **P2B rollback**：revert template caller SHA/config commit。已经创建的personal repos不会被template自动改写。
-- **State rollback**：checkpoint metadata、E4 compatibility和cache namespace决定能否复用。旧engine遇到future/incompatible checkpoint丢弃并rebuild；不降级best-effort加载。
+- **State rollback**：selected prior-run artifact、checkpoint metadata与E4 compatibility共同决定能否复用。旧engine遇到future/incompatible checkpoint丢弃并rebuild；不降级best-effort加载，也不回溯猜另一个artifact。
 - **Output rollback**：GitHub artifacts与E5 output generations immutable；失败run不替换authority。Pages失败不删除private result。
-- **Transport outage/eviction**：cache miss等同空state；从Zotero重建。Artifact retention到期不影响correctness。
+- **Transport outage/retention**：previous artifact缺失、过期、被删除或Actions API/download失败等同空state；从Zotero重建。30天retention只影响加速，不影响correctness。
 - **Engine invocation crash**：没有合法final RunResult即failure；只上传bounded diagnostics，不save state或publish。
 
 ## 18. Explicit non-goals
 
-P2不实现Cloudflare control plane、GitHub App、automatic repo provisioning、Web config editor、Zotero OAuth、AI adapters、clustering/new ranking、durable feedback、harvester H1–H3、automatic central upgrade、arbitrary provider secrets、GitHub artifact-based state discovery或GHES fallback。
+P2不实现Cloudflare control plane、GitHub App、automatic repo provisioning、Web config editor、Zotero OAuth、AI adapters、clustering/new ranking、durable feedback、harvester H1–H3、automatic central upgrade、arbitrary provider secrets、cross-repository state storage或GHES fallback。
 
 P3/P4才处理Web/control-plane/provisioning/upgrades；P2只证明GitHub personal compute/data plane可在Cloudflare离线时独立、安全、可回滚地运行centralized ZotWatch engine。
