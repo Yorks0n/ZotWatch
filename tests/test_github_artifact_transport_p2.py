@@ -20,6 +20,9 @@ class FakeSource:
         self.bundles = bundles
         self.downloaded = []
 
+    def verify_current_run(self, context):
+        return None
+
     def list_completed_runs(self, context, limit):
         assert limit == 15
         return self.runs[:limit]
@@ -27,9 +30,9 @@ class FakeSource:
     def list_run_artifacts(self, context, run_id):
         return self.artifacts.get(run_id, [])
 
-    def download_artifact(self, context, artifact_id, destination):
-        self.downloaded.append(artifact_id)
-        shutil.copytree(self.bundles[artifact_id], destination)
+    def download_artifact(self, context, artifact, destination):
+        self.downloaded.append(artifact.artifact_id)
+        shutil.copytree(self.bundles[artifact.artifact_id], destination)
         return destination
 
 
@@ -57,7 +60,7 @@ def _context():
     )
 
 
-def _expectation(run_id):
+def _expectation(run):
     context = _context()
     return CheckpointExpectation(
         engine_repository="Yorks0n/ZotWatch",
@@ -65,8 +68,8 @@ def _expectation(run_id):
         workspace_repository_id=context.repository_id,
         caller_workflow_id=context.workflow_id,
         caller_workflow_path=context.workflow_path,
-        caller_event="workflow_dispatch",
-        caller_run_id=run_id,
+        caller_event=run.event,
+        caller_run_id=run.run_id,
         caller_ref=context.ref,
         config_fingerprint_sha256="b" * 64,
     )
