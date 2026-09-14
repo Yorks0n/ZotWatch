@@ -3,7 +3,12 @@ import json
 import pytest
 
 from zotwatch.results.models import ArtifactReference, RunManifest, RunResult, StageRecord
-from zotwatch.workflow.results import WorkflowResultError, validate_and_materialize_result
+from zotwatch.workflow.results import (
+    WorkflowResultError,
+    materialize_pages_payload,
+    seal_private_result,
+    validate_and_materialize_result,
+)
 
 
 def _contracts(state, reports, *, status="succeeded", exit_code=0):
@@ -69,4 +74,59 @@ def test_materializer_rejects_exit_or_hash_mismatch(tmp_path):
         validate_and_materialize_result(
             machine, process_exit_code=0, state_root=state, reports_root=reports,
             publishable_destination=tmp_path / "out2",
+        )
+
+
+def test_pages_revalidates_sealed_current_run_allowlist(tmp_path):
+    state = tmp_path / "state"
+    reports = tmp_path / "reports"
+    machine = _contracts(state, reports)
+    private = tmp_path / "private"
+    public = tmp_path / "public"
+    validate_and_materialize_result(
+        machine, process_exit_code=0, state_root=state, reports_root=reports,
+        publishable_destination=public, private_destination=private / "final",
+    )
+    seal_private_result(
+        private,
+        engine_repository="Yorks0n/ZotWatch", engine_sha="a" * 40,
+        workspace_repository="example/private-zotwatch", workspace_repository_id=1234,
+        caller_run_id=77, run_id="run-1", result_status="succeeded",
+        publish_requested=True,
+    )
+
+    pages = materialize_pages_payload(
+        private, public, tmp_path / "pages",
+        expected_engine_repository="Yorks0n/ZotWatch", expected_engine_sha="a" * 40,
+        expected_workspace_repository="example/private-zotwatch",
+        expected_workspace_repository_id=1234, expected_caller_run_id=77,
+        expected_run_id="run-1",
+    )
+    assert [path.name for path in pages.iterdir()] == ["recommendations.json"]
+
+
+def test_pages_requires_explicit_publish_opt_in(tmp_path):
+    state = tmp_path / "state"
+    reports = tmp_path / "reports"
+    machine = _contracts(state, reports)
+    private = tmp_path / "private"
+    public = tmp_path / "public"
+    validate_and_materialize_result(
+        machine, process_exit_code=0, state_root=state, reports_root=reports,
+        publishable_destination=public, private_destination=private / "final",
+    )
+    seal_private_result(
+        private,
+        engine_repository="Yorks0n/ZotWatch", engine_sha="a" * 40,
+        workspace_repository="example/private-zotwatch", workspace_repository_id=1234,
+        caller_run_id=77, run_id="run-1", result_status="succeeded",
+        publish_requested=False,
+    )
+    with pytest.raises(WorkflowResultError):
+        materialize_pages_payload(
+            private, public, tmp_path / "pages",
+            expected_engine_repository="Yorks0n/ZotWatch", expected_engine_sha="a" * 40,
+            expected_workspace_repository="example/private-zotwatch",
+            expected_workspace_repository_id=1234, expected_caller_run_id=77,
+            expected_run_id="run-1",
         )
