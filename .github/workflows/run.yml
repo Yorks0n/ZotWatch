@@ -1,0 +1,357 @@
+name: ZotWatch reusable compute
+
+on:
+  workflow_call:
+    inputs:
+      config-path:
+        type: string
+        default: zotwatch.yaml
+      mode:
+        type: string
+        default: run
+      full-rebuild:
+        type: boolean
+        default: false
+      request-id:
+        type: string
+        default: ""
+      expected-config-sha:
+        type: string
+        default: ""
+    secrets:
+      ZOTERO_USER_ID:
+        required: false
+      ZOTERO_API_KEY:
+        required: false
+      VOYAGE_API_KEY:
+        required: false
+      DASHSCOPE_API_KEY:
+        required: false
+      OPENROUTER_API_KEY:
+        required: false
+      DEEPSEEK_API_KEY:
+        required: false
+      OPENAI_API_KEY:
+        required: false
+      ANTHROPIC_API_KEY:
+        required: false
+      ZOTWATCH_CUSTOM_1_CREDENTIAL:
+        required: false
+      ZOTWATCH_CUSTOM_2_CREDENTIAL:
+        required: false
+      ZOTWATCH_CUSTOM_3_CREDENTIAL:
+        required: false
+      ZOTWATCH_CUSTOM_4_CREDENTIAL:
+        required: false
+    outputs:
+      result-status:
+        value: ${{ jobs.compute.outputs.result-status }}
+      run-id:
+        value: ${{ jobs.compute.outputs.run-id }}
+      request-id:
+        value: ${{ jobs.compute.outputs.request-id }}
+      engine-sha:
+        value: ${{ jobs.compute.outputs.engine-sha }}
+      manifest-artifact-id:
+        value: ${{ jobs.compute.outputs.manifest-artifact-id }}
+      report-artifact-id:
+        value: ${{ jobs.compute.outputs.report-artifact-id }}
+      publish-requested:
+        value: ${{ jobs.compute.outputs.publish-requested }}
+
+permissions: {}
+
+jobs:
+  compute:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    concurrency:
+      group: zotwatch-${{ github.repository_id }}-${{ github.workflow_ref }}-${{ github.ref }}
+      cancel-in-progress: false
+    outputs:
+      result-status: ${{ steps.aggregate.outputs.result-status }}
+      run-id: ${{ steps.aggregate.outputs.run-id }}
+      request-id: ${{ steps.request.outputs.request-id }}
+      engine-sha: ${{ steps.identity.outputs.engine-sha }}
+      manifest-artifact-id: ${{ steps.upload-private.outputs.artifact-id }}
+      report-artifact-id: ${{ steps.upload-report.outputs.artifact-id }}
+      publish-requested: ${{ steps.config.outputs.publish-requested }}
+    steps:
+      - name: Validate caller boundary
+        env:
+          CALLER_EVENT: ${{ github.event_name }}
+          CALLER_PRIVATE: ${{ github.event.repository.private }}
+          CALLER_REF: ${{ github.ref }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_FULL: ${{ inputs['full-rebuild'] }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c 'import os,sys; ok=os.environ["CALLER_EVENT"] in {"schedule","workflow_dispatch"} and os.environ["CALLER_PRIVATE"] == "true" and os.environ["CALLER_REF"].startswith("refs/heads/") and os.environ["INPUT_MODE"] in {"run","profile","validate"} and not (os.environ["INPUT_MODE"] == "validate" and os.environ["INPUT_FULL"] == "true"); sys.exit(0 if ok else "untrusted or invalid reusable-workflow invocation")'
+
+      - name: Checkout personal workspace
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          path: workspace
+          persist-credentials: false
+
+      - name: Checkout exact central engine
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          path: engine
+          persist-credentials: false
+
+      - name: Set up pinned Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: 3.11.11
+          cache: pip
+          cache-dependency-path: |
+            engine/constraints/p2-runtime-linux-py311.txt
+            engine/pyproject.toml
+
+      - name: Install pinned validation runtime
+        if: inputs.mode == 'validate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --constraint engine/constraints/p2-runtime-linux-py311.txt pydantic PyYAML jsonschema python-dotenv requests
+          python -m pip install --disable-pip-version-check --no-deps ./engine
+
+      - name: Install pinned engine runtime
+        if: inputs.mode != 'validate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --disable-pip-version-check --constraint engine/constraints/p2-runtime-linux-py311.txt ./engine
+
+      - name: Verify reusable workflow and engine identity
+        id: identity
+        shell: bash
+        run: >-
+          python -m zotwatch.workflow identity
+          --workflow-repository '${{ job.workflow_repository }}'
+          --workflow-sha '${{ job.workflow_sha }}'
+          --engine "$GITHUB_WORKSPACE/engine"
+          --github-output
+
+      - name: Validate request correlation
+        id: request
+        env:
+          INPUT_REQUEST_ID: ${{ inputs['request-id'] }}
+          FALLBACK_REQUEST_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -c 'import os,re; v=os.environ["INPUT_REQUEST_ID"] or os.environ["FALLBACK_REQUEST_ID"]; assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}",v); open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8").write(f"request-id={v}\n")'
+
+      - name: Validate and inspect config offline
+        id: config
+        shell: bash
+        run: >-
+          python -m zotwatch.workflow inspect-config
+          --workspace "$GITHUB_WORKSPACE/workspace"
+          --config-path '${{ inputs['config-path'] }}'
+          --expected-config-sha '${{ inputs['expected-config-sha'] }}'
+          --mode '${{ inputs.mode }}'
+          --full-rebuild '${{ inputs['full-rebuild'] }}'
+          --github-output
+
+      - name: Validate config only
+        if: inputs.mode == 'validate'
+        shell: bash
+        run: zotwatch config validate --workspace "$GITHUB_WORKSPACE/workspace"
+
+      - name: Restore prior private checkpoint
+        if: inputs.mode != 'validate'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: >-
+          python -m zotwatch.workflow restore
+          --repository '${{ github.repository }}'
+          --repository-id '${{ github.repository_id }}'
+          --run-id '${{ github.run_id }}'
+          --run-attempt '${{ github.run_attempt }}'
+          --ref '${{ github.ref }}'
+          --event '${{ github.event_name }}'
+          --workspace "$GITHUB_WORKSPACE/workspace"
+          --state "$RUNNER_TEMP/zotwatch-state"
+          --staging "$RUNNER_TEMP/zotwatch-restore"
+          --context-output "$RUNNER_TEMP/zotwatch-workflow-context.json"
+
+      - name: Run full profile before watch
+        if: inputs.mode == 'run' && inputs.full-rebuild
+        id: pre-profile
+        env:
+          ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
+          ZOTERO_API_KEY: ${{ secrets.ZOTERO_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ZOTWATCH_CUSTOM_1_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_1_CREDENTIAL }}
+          ZOTWATCH_CUSTOM_2_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_2_CREDENTIAL }}
+          ZOTWATCH_CUSTOM_3_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_3_CREDENTIAL }}
+          ZOTWATCH_CUSTOM_4_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_4_CREDENTIAL }}
+        shell: bash
+        run: |
+          set +e
+          zotwatch profile --workspace "$GITHUB_WORKSPACE/workspace" --state-dir "$RUNNER_TEMP/zotwatch-state" --reports-dir "$RUNNER_TEMP/zotwatch-reports" --full --machine-result >"$RUNNER_TEMP/pre-profile-result.json" 2>"$RUNNER_TEMP/pre-profile.stderr"
+          code=$?
+          echo "exit-code=$code" >>"$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Validate full-profile result
+        if: inputs.mode == 'run' && inputs.full-rebuild
+        id: pre-profile-result
+        shell: bash
+        run: >-
+          python -m zotwatch.workflow result
+          --machine-result "$RUNNER_TEMP/pre-profile-result.json"
+          --process-exit-code '${{ steps.pre-profile.outputs.exit-code }}'
+          --state "$RUNNER_TEMP/zotwatch-state"
+          --reports "$RUNNER_TEMP/zotwatch-reports"
+          --publishable "$RUNNER_TEMP/zotwatch-empty-profile"
+          --private "$RUNNER_TEMP/zotwatch-operational/profile"
+          --summary-output "$RUNNER_TEMP/pre-profile-summary.json"
+          --github-output
+
+      - name: Run engine
+        if: inputs.mode != 'validate' && (!inputs.full-rebuild || inputs.mode == 'profile' || steps.pre-profile-result.outputs.status == 'succeeded')
+        id: invoke
+        env:
+          ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
+          ZOTERO_API_KEY: ${{ secrets.ZOTERO_API_KEY }}
+          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
+          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ZOTWATCH_CUSTOM_1_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_1_CREDENTIAL }}
+          ZOTWATCH_CUSTOM_2_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_2_CREDENTIAL }}
+          ZOTWATCH_CUSTOM_3_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_3_CREDENTIAL }}
+          ZOTWATCH_CUSTOM_4_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_4_CREDENTIAL }}
+          INPUT_MODE: ${{ inputs.mode }}
+          INPUT_FULL: ${{ inputs['full-rebuild'] }}
+        shell: bash
+        run: |
+          set +e
+          command=watch
+          extra=()
+          if [[ "$INPUT_MODE" == "profile" ]]; then
+            command=profile
+            if [[ "$INPUT_FULL" == "true" ]]; then extra+=(--full); fi
+          fi
+          zotwatch "$command" --workspace "$GITHUB_WORKSPACE/workspace" --state-dir "$RUNNER_TEMP/zotwatch-state" --reports-dir "$RUNNER_TEMP/zotwatch-reports" --machine-result "${extra[@]}" >"$RUNNER_TEMP/machine-result.json" 2>"$RUNNER_TEMP/engine.stderr"
+          code=$?
+          echo "exit-code=$code" >>"$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Validate finalized engine result
+        if: steps.invoke.outcome == 'success'
+        id: result
+        shell: bash
+        run: >-
+          python -m zotwatch.workflow result
+          --machine-result "$RUNNER_TEMP/machine-result.json"
+          --process-exit-code '${{ steps.invoke.outputs.exit-code }}'
+          --state "$RUNNER_TEMP/zotwatch-state"
+          --reports "$RUNNER_TEMP/zotwatch-reports"
+          --publishable "$RUNNER_TEMP/zotwatch-publishable"
+          --private "$RUNNER_TEMP/zotwatch-operational/final"
+          --summary-output "$RUNNER_TEMP/result-summary.json"
+          --github-output
+
+      - name: Select authoritative result
+        id: aggregate
+        env:
+          MODE: ${{ inputs.mode }}
+          MAIN_STATUS: ${{ steps.result.outputs.status }}
+          MAIN_RUN_ID: ${{ steps.result.outputs.run-id }}
+          PROFILE_STATUS: ${{ steps.pre-profile-result.outputs.status }}
+          PROFILE_RUN_ID: ${{ steps.pre-profile-result.outputs.run-id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$MODE" == "validate" ]]; then
+            echo "result-status=succeeded" >>"$GITHUB_OUTPUT"
+            echo "run-id=" >>"$GITHUB_OUTPUT"
+          elif [[ -n "$MAIN_STATUS" ]]; then
+            echo "result-status=$MAIN_STATUS" >>"$GITHUB_OUTPUT"
+            echo "run-id=$MAIN_RUN_ID" >>"$GITHUB_OUTPUT"
+          else
+            echo "result-status=$PROFILE_STATUS" >>"$GITHUB_OUTPUT"
+            echo "run-id=$PROFILE_RUN_ID" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Seal private operational result
+        if: inputs.mode != 'validate' && steps.aggregate.outputs.result-status != ''
+        shell: bash
+        run: >-
+          python -m zotwatch.workflow seal-result
+          --private "$RUNNER_TEMP/zotwatch-operational"
+          --engine-sha '${{ steps.identity.outputs.engine-sha }}'
+          --repository '${{ github.repository }}'
+          --repository-id '${{ github.repository_id }}'
+          --caller-run-id '${{ github.run_id }}'
+          --run-id '${{ steps.aggregate.outputs.run-id }}'
+          --status '${{ steps.aggregate.outputs.result-status }}'
+          --publish-requested '${{ steps.config.outputs.publish-requested }}'
+
+      - name: Upload private operational result
+        if: inputs.mode != 'validate' && steps.aggregate.outputs.result-status != ''
+        id: upload-private
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zotwatch-private-run-v1
+          path: ${{ runner.temp }}/zotwatch-operational
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload private recommendation result
+        if: steps.result.outputs.status == 'succeeded' || steps.result.outputs.status == 'degraded'
+        id: upload-report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zotwatch-recommendations-v1
+          path: ${{ runner.temp }}/zotwatch-publishable
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Export successful private checkpoint
+        if: steps.aggregate.outputs.result-status == 'succeeded' && inputs.mode != 'validate'
+        shell: bash
+        run: >-
+          python -m zotwatch.workflow export-checkpoint
+          --context "$RUNNER_TEMP/zotwatch-workflow-context.json"
+          --engine-sha '${{ steps.identity.outputs.engine-sha }}'
+          --engine-run-id '${{ steps.aggregate.outputs.run-id }}'
+          --config-fingerprint '${{ steps.config.outputs.config-fingerprint-sha256 }}'
+          --state "$RUNNER_TEMP/zotwatch-state"
+          --destination "$RUNNER_TEMP/zotwatch-checkpoint"
+
+      - name: Upload successful private checkpoint
+        if: steps.aggregate.outputs.result-status == 'succeeded' && inputs.mode != 'validate'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zotwatch-state-checkpoint-v1
+          path: ${{ runner.temp }}/zotwatch-checkpoint
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
+      - name: Propagate engine result
+        if: inputs.mode != 'validate' && steps.aggregate.outputs.result-status != 'succeeded'
+        shell: bash
+        run: exit 1

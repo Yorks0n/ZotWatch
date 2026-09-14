@@ -54,6 +54,8 @@ def test_wheel_and_sdist_are_self_contained():
     with zipfile.ZipFile(next(dist.glob("*.whl"))) as wheel:
         names = wheel.namelist()
         assert wheel.read("zotwatch/resources/journal_metrics.csv") == original
+        assert "zotwatch/workflow/checkpoint.py" in names
+        assert "zotwatch/resources/state-checkpoint-v1.schema.json" in names
         assert all(name.startswith(("src/", "zotwatch/", "zotwatch-2.0.0.dev1.dist-info/")) for name in names)
         assert not any(name.endswith((".env", ".sqlite", ".index")) for name in names)
     with tarfile.open(next(dist.glob("*.tar.gz"))) as archive:
