@@ -191,15 +191,15 @@ Checkpoint artifact使用固定versioned name `zotwatch-state-checkpoint-v1`，�
 
 1. 要求caller repository是private、当前event是`schedule`或`workflow_dispatch`、当前ref是branch；不满足时`run/profile`在Secret注入前fail closed，`validate`不做state discovery。
 2. 使用当前caller `GITHUB_TOKEN`和literal `https://api.github.com`读取`GET /repos/{github.repository}/actions/runs/{github.run_id}`，验证repository ID、caller workflow ID/path、head branch/ref、current event与GitHub contexts一致。
-3. 对这个exact caller workflow ID查询runs，固定当前branch、`status=success`、bounded page size；在返回中只接受`status=completed`、`conclusion=success`、event属于trusted allowlist、head repository ID等于caller repository ID、且早于当前run的记录。
-4. 确定其中newest exact run后停止选择。不会跨workflow、跨ref、跨repository，也不会在该run无checkpoint时继续回溯更旧run。
-5. 对该exact run调用list workflow run artifacts，只接受恰好一个未过期、名字exact为`zotwatch-state-checkpoint-v1`、artifact workflow-run/repository metadata匹配的条目。
-6. 以返回的numeric artifact ID精确下载到独立staging。下载action/API不接受caller input的artifact name、ID、repository或run ID。
-7. 验证GitHub artifact digest（若API提供）并运行checkpoint importer。任一API status、pagination bound、metadata、archive、schema、hash、path、repo/ref/config/library/state validation失败，都删除staging并作为restore miss从Zotero rebuild。
+3. 对这个exact caller workflow ID查询runs，固定当前branch、`status=completed`和单页上限15；最多审阅newest-first的15个candidate，不做第二页或无限历史追溯。候选必须是`schedule`或`workflow_dispatch`、head repository ID等于caller repository ID、workflow ID/path与ref完全一致、且不是current run。Overall workflow conclusion不作为checkpoint有效性的替代判断：compute成功上传checkpoint后，独立Pages job失败不应废掉该checkpoint。
+4. 对每个候选exact run分别列出artifacts。若不存在**恰好一个**未过期、名字exact为`zotwatch-state-checkpoint-v1`、artifact workflow-run/repository metadata匹配的条目，则继续检查下一个较旧候选。这样validate-only success会被自然跳过。
+5. 以该候选返回的numeric artifact ID精确下载到独立staging。下载action/API不接受caller input的artifact name、ID、repository或run ID。
+6. 验证GitHub artifact digest（若API提供），再运行checkpoint importer；importer必须确认`source_result_status == succeeded`以及repository/workflow/ref/run namespace与所选candidate一致。Archive、schema、hash、path、repo/ref/config/library/state validation任一失败时删除该candidate staging并继续检查上限内的下一个较旧candidate。
+7. 第一个完整通过closed metadata、artifact digest、checkpoint importer与E3/E4 compatibility validation的checkpoint成为restore source。15个候选耗尽或REST/API失败时返回普通restore miss并从Zotero rebuild，不按mtime/文件名猜测，也不接受caller提供的artifact/run ID。
 
 GitHub REST允许按workflow、branch、event/status筛选runs，并要求Actions read；artifact API可从exact run列出和按ID下载：<https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-workflow>、<https://docs.github.com/en/rest/actions/artifacts#list-workflow-run-artifacts>。
 
-“GitHub run成功”不是单独的checkpoint trust proof。`run.yml`只在final E5 result `status == succeeded`、exit code 0、identity/config/result/checkpoint validation全部通过时上传固定name checkpoint；`degraded`虽可保留recommendation/private result，却不上传checkpoint。Importer还要求`checkpoint.json.source_result_status == succeeded`并匹配selected run。因此failed/degraded/untrusted run不能成为state source。若newest matching GitHub-success run没有checkpoint，restore miss并rebuild，不猜测另一个run。
+“GitHub run成功”不是单独的checkpoint trust proof。`run.yml`只在final E5 result `status == succeeded`、exit code 0、identity/config/result/checkpoint validation全部通过时上传固定name checkpoint；`degraded`虽可保留recommendation/private result，却不上传checkpoint。Importer还要求`checkpoint.json.source_result_status == succeeded`并匹配selected run。因此failed/degraded compute不能成为state source，而Pages-only failure也不会掩盖已经完整上传并自证成功的checkpoint。若newest candidate没有有效checkpoint，bounded search继续检查较旧candidate。
 
 ### 6.3 Current successful checkpoint upload and retention
 
