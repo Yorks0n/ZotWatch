@@ -6,9 +6,11 @@ import hashlib
 import json
 import os
 import shutil
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from zotwatch.results.models import ArtifactReference, RunManifest, RunResult
 
@@ -24,12 +26,139 @@ class WorkflowResultError(RuntimeError):
     """Machine result and its immutable artifacts do not form a valid E5 result."""
 
 
+class WorkflowEnvelope(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    schema_name: Literal["zotwatch-workflow-envelope"] = "zotwatch-workflow-envelope"
+    schema_version: Literal[1] = 1
+    engine_repository: str
+    engine_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    workspace_repository: str
+    workspace_repository_id: int = Field(gt=0)
+    caller_run_id: int = Field(gt=0)
+    run_id: str
+    result_status: Literal["succeeded", "degraded", "failed"]
+    publish_requested: bool
+
+
 @dataclass(frozen=True)
 class ValidatedWorkflowResult:
     result: RunResult
     manifest: RunManifest
     publishable_directory: Path
     private_directory: Path | None
+
+
+def seal_private_result(
+    private_root: Path | str,
+    *,
+    engine_repository: str,
+    engine_sha: str,
+    workspace_repository: str,
+    workspace_repository_id: int,
+    caller_run_id: int,
+    run_id: str,
+    result_status: str,
+    publish_requested: bool,
+) -> WorkflowEnvelope:
+    root = Path(private_root)
+    if not root.is_dir():
+        raise WorkflowResultError("Private result staging is missing")
+    envelope = WorkflowEnvelope(
+        engine_repository=engine_repository,
+        engine_sha=engine_sha,
+        workspace_repository=workspace_repository,
+        workspace_repository_id=workspace_repository_id,
+        caller_run_id=caller_run_id,
+        run_id=run_id,
+        result_status=result_status,
+        publish_requested=publish_requested,
+    )
+    target = root / "workflow-envelope.json"
+    if target.exists():
+        raise WorkflowResultError("Private result is already sealed")
+    target.write_text(envelope.model_dump_json() + "\n", encoding="utf-8")
+    return envelope
+
+
+def materialize_pages_payload(
+    private_root: Path | str,
+    report_root: Path | str,
+    destination: Path | str,
+    *,
+    expected_engine_repository: str,
+    expected_engine_sha: str,
+    expected_workspace_repository: str,
+    expected_workspace_repository_id: int,
+    expected_caller_run_id: int,
+    expected_run_id: str,
+) -> Path:
+    """Revalidate two exact current-run artifacts and build a Pages allowlist."""
+
+    private = Path(private_root).resolve()
+    reports = Path(report_root).resolve()
+    try:
+        envelope = WorkflowEnvelope.model_validate_json(
+            (private / "workflow-envelope.json").read_text(encoding="utf-8")
+        )
+        result = RunResult.model_validate_json(
+            (private / "final/machine-result.json").read_text(encoding="utf-8")
+        )
+        manifest = RunManifest.model_validate_json(
+            (private / "final/run-manifest.json").read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, ValidationError, ValueError) as exc:
+        raise WorkflowResultError("Private Pages input contracts are invalid") from exc
+    expected = (
+        expected_engine_repository,
+        expected_engine_sha,
+        expected_workspace_repository,
+        expected_workspace_repository_id,
+        expected_caller_run_id,
+        expected_run_id,
+    )
+    actual = (
+        envelope.engine_repository,
+        envelope.engine_sha,
+        envelope.workspace_repository,
+        envelope.workspace_repository_id,
+        envelope.caller_run_id,
+        envelope.run_id,
+    )
+    if actual != expected or envelope.result_status != "succeeded" or not envelope.publish_requested:
+        raise WorkflowResultError("Pages deployment identity or opt-in does not match")
+    if (
+        result.run_id != expected_run_id
+        or result.status != "succeeded"
+        or result != RunResult(
+            run_id=manifest.run_id,
+            status=manifest.status,
+            exit_code=manifest.exit_code,
+            error=manifest.error,
+            manifest_path="runs/" + manifest.run_id + ".json",
+            state_generation_id=manifest.state_generation_id,
+            output_generation_id=manifest.output_generation_id,
+            artifacts=manifest.artifacts,
+        )
+    ):
+        raise WorkflowResultError("Pages RunResult and private manifest disagree")
+    copies: dict[str, bytes] = {}
+    for artifact in result.artifacts:
+        name = PurePosixPath(artifact.path).name
+        if not artifact.publishable or PUBLISHABLE_MEDIA.get(name) != artifact.media_type:
+            raise WorkflowResultError("Pages input is outside the publishable allowlist")
+        source = reports / name
+        if source.is_symlink() or not source.is_file():
+            raise WorkflowResultError("Pages artifact is missing")
+        content = source.read_bytes()
+        if len(content) != artifact.size_bytes or hashlib.sha256(content).hexdigest() != artifact.sha256:
+            raise WorkflowResultError("Pages artifact hash does not match RunResult")
+        copies[name] = content
+    if not copies:
+        raise WorkflowResultError("Pages deployment has no publishable artifacts")
+    output = Path(destination).resolve()
+    _replace_directory(output, copies)
+    return output
 
 
 def validate_and_materialize_result(
@@ -72,7 +201,7 @@ def validate_and_materialize_result(
 
     publishable = Path(publishable_destination).resolve()
     private = Path(private_destination).resolve() if private_destination is not None else None
-    _materialize_publishable(result, reports, publishable)
+    _materialize_publishable(result, manifest.command, reports, publishable)
     if private is not None:
         _materialize_private(result, manifest, private)
     return ValidatedWorkflowResult(result, manifest, publishable, private)
@@ -90,10 +219,22 @@ def _validate_exit_semantics(result: RunResult, process_exit_code: int) -> None:
         raise WorkflowResultError("Successful RunResult cannot contain a terminal error")
 
 
-def _materialize_publishable(result: RunResult, reports: Path, destination: Path) -> None:
+def _materialize_publishable(
+    result: RunResult, command: str, reports: Path, destination: Path
+) -> None:
     if result.status == "failed":
         if result.artifacts:
             raise WorkflowResultError("Failed RunResult cannot publish recommendation artifacts")
+        _replace_directory(destination, {})
+        return
+    if command == "profile":
+        if result.output_generation_id is not None or result.artifacts:
+            raise WorkflowResultError("Profile RunResult cannot declare recommendation outputs")
+        _replace_directory(destination, {})
+        return
+    if result.status == "degraded" and not result.artifacts:
+        if result.output_generation_id is not None:
+            raise WorkflowResultError("Degraded result has an output generation without artifacts")
         _replace_directory(destination, {})
         return
     if not result.output_generation_id or not result.artifacts:
@@ -167,6 +308,7 @@ def _safe_join(root: Path, relative: str) -> Path:
 
 
 __all__ = [
-    "PUBLISHABLE_MEDIA", "ValidatedWorkflowResult", "WorkflowResultError",
+    "PUBLISHABLE_MEDIA", "ValidatedWorkflowResult", "WorkflowEnvelope",
+    "WorkflowResultError", "materialize_pages_payload", "seal_private_result",
     "validate_and_materialize_result",
 ]

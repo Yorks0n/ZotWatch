@@ -101,9 +101,12 @@ def restore_prior_checkpoint(
     _validate_context(context)
     try:
         source.verify_current_run(context)
-        candidates = source.list_completed_runs(context, max_candidates)
     except Exception as exc:
-        raise ArtifactTransportError("Current run or checkpoint discovery could not be verified") from exc
+        raise ArtifactTransportError("Current run metadata could not be verified") from exc
+    try:
+        candidates = source.list_completed_runs(context, max_candidates)
+    except Exception:
+        return RestoreOutcome(False, None, None)
     for run in candidates[:max_candidates]:
         if not _eligible_run(run, context):
             continue
@@ -173,6 +176,41 @@ class GitHubArtifactSource:
         parsed = _parse_run(raw)
         if not _eligible_current_run(parsed, context):
             raise ArtifactTransportError("Current GitHub run metadata does not match context")
+
+    def discover_current_context(
+        self,
+        *,
+        repository: str,
+        repository_id: int,
+        run_id: int,
+        ref: str,
+        event: str,
+    ) -> PriorRunContext:
+        raw = self._json(
+            f"/repos/{_repository_path(repository)}/actions/runs/{run_id}"
+        )
+        run = _parse_run(raw)
+        raw_repository = raw.get("repository") if isinstance(raw, dict) else None
+        full_name = raw_repository.get("full_name") if isinstance(raw_repository, dict) else None
+        if (
+            full_name != repository
+            or run.run_id != run_id
+            or run.repository_id != repository_id
+            or run.event != event
+            or run.head_ref != ref
+            or run.workflow_id <= 0
+            or not run.workflow_path.startswith(".github/workflows/")
+        ):
+            raise ArtifactTransportError("Current GitHub run metadata does not match context")
+        return PriorRunContext(
+            repository=repository,
+            repository_id=repository_id,
+            workflow_id=run.workflow_id,
+            workflow_path=run.workflow_path,
+            current_run_id=run_id,
+            ref=ref,
+            event=event,
+        )
 
     def list_completed_runs(
         self, context: PriorRunContext, limit: int
