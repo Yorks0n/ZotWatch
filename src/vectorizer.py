@@ -9,6 +9,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+# Reviewed from the upstream Hugging Face repository on 2026-09-14.
+DEFAULT_MODEL_REVISION = "1110a243fdf4706b3f48f1d95db1a4f5529b4d41"
+
 try:
     from sentence_transformers import SentenceTransformer
 except ImportError:  # pragma: no cover - handled via runtime requirement
@@ -18,13 +22,17 @@ except ImportError:  # pragma: no cover - handled via runtime requirement
 class TextVectorizer:
     def __init__(
         self,
-        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        model_name: str = DEFAULT_MODEL_NAME,
         *,
         model_revision: str | None = None,
         artifact_identity: str | None = None,
     ):
         self.model_name = model_name
-        self.model_revision = model_revision
+        self.model_revision = (
+            DEFAULT_MODEL_REVISION
+            if model_revision is None and model_name == DEFAULT_MODEL_NAME
+            else model_revision
+        )
         self.artifact_identity = artifact_identity
         self._model = None
 
@@ -36,7 +44,8 @@ class TextVectorizer:
                 "sentence-transformers is not installed. Install it or adjust requirements."
             )
         logger.info("Loading embedding model %s", self.model_name)
-        self._model = SentenceTransformer(self.model_name)
+        kwargs = {"revision": self.model_revision} if self.model_revision else {}
+        self._model = SentenceTransformer(self.model_name, **kwargs)
 
     @property
     def model(self):  # type: ignore
@@ -94,4 +103,4 @@ def _cached_huggingface_revision(model_name: str) -> str | None:
     return revision
 
 
-__all__ = ["TextVectorizer"]
+__all__ = ["DEFAULT_MODEL_NAME", "DEFAULT_MODEL_REVISION", "TextVectorizer"]

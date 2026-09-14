@@ -3,6 +3,7 @@ import subprocess
 import pytest
 
 from zotwatch.workflow.identity import WorkflowIdentityError, verify_workflow_identity
+from src import vectorizer as vectorizer_module
 
 
 def _repository(path):
@@ -67,3 +68,20 @@ def test_identity_rejects_wrong_repository_or_checkout(tmp_path):
             workflow_sha="0" * 40,
             engine_path=engine,
         )
+
+
+def test_default_embedding_model_loads_an_immutable_revision(monkeypatch):
+    calls = []
+
+    class FakeModel:
+        def __init__(self, name, **kwargs):
+            calls.append((name, kwargs))
+
+    monkeypatch.setattr(vectorizer_module, "SentenceTransformer", FakeModel)
+    vectorizer_module.TextVectorizer().load()
+    assert calls == [
+        (
+            vectorizer_module.DEFAULT_MODEL_NAME,
+            {"revision": vectorizer_module.DEFAULT_MODEL_REVISION},
+        )
+    ]
