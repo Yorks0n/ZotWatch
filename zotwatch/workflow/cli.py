@@ -8,16 +8,6 @@ import re
 import subprocess
 import sys
 
-from .artifacts import GitHubArtifactSource, restore_prior_checkpoint
-from .checkpoint import CheckpointContext, CheckpointExpectation, export_checkpoint
-from .identity import verify_workflow_identity
-from .results import (
-    materialize_pages_payload,
-    seal_private_result,
-    validate_and_materialize_result,
-)
-
-
 EXPECTED_ENGINE_REPOSITORY = "Yorks0n/ZotWatch"
 
 
@@ -102,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
         if args.command == "identity":
+            from .identity import verify_workflow_identity
+
             value = verify_workflow_identity(
                 expected_repository=EXPECTED_ENGINE_REPOSITORY,
                 workflow_repository=args.workflow_repository,
@@ -121,6 +113,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "export-checkpoint":
             _export(args)
         elif args.command == "seal-result":
+            from .results import seal_private_result
+
             seal_private_result(
                 args.private,
                 engine_repository=EXPECTED_ENGINE_REPOSITORY,
@@ -133,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
                 publish_requested=args.publish_requested == "true",
             )
         else:
+            from .results import materialize_pages_payload
+
             materialize_pages_payload(
                 args.private,
                 args.reports,
@@ -182,6 +178,8 @@ def _inspect_config(args) -> None:
 
 def _restore(args) -> None:
     from zotwatch.runtime import load_effective_runtime
+    from .artifacts import GitHubArtifactSource, restore_prior_checkpoint
+    from .checkpoint import CheckpointExpectation
 
     effective = load_effective_runtime(Path(args.workspace))
     token = args.token or os.environ.get("GITHUB_TOKEN", "")
@@ -227,6 +225,8 @@ def _restore(args) -> None:
 
 
 def _result(args) -> None:
+    from .results import validate_and_materialize_result
+
     validated = validate_and_materialize_result(
         args.machine_result,
         process_exit_code=args.process_exit_code,
@@ -252,6 +252,8 @@ def _result(args) -> None:
 
 
 def _export(args) -> None:
+    from .checkpoint import CheckpointContext, export_checkpoint
+
     raw = json.loads(Path(args.context).read_text(encoding="utf-8"))
     context = CheckpointContext(
         source_result_status="succeeded",

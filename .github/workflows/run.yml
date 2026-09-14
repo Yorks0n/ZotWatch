@@ -116,7 +116,16 @@ jobs:
             engine/constraints/p2-runtime-linux-py311.txt
             engine/pyproject.toml
 
+      - name: Install pinned validation runtime
+        if: inputs.mode == 'validate'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --disable-pip-version-check --constraint engine/constraints/p2-runtime-linux-py311.txt pydantic PyYAML jsonschema python-dotenv requests
+          python -m pip install --disable-pip-version-check --no-deps ./engine
+
       - name: Install pinned engine runtime
+        if: inputs.mode != 'validate'
         shell: bash
         run: |
           set -euo pipefail

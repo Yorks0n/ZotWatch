@@ -52,12 +52,12 @@ jobs:
             engine/constraints/p2-runtime-linux-py311.txt
             engine/pyproject.toml
 
-      - name: Install pinned engine runtime
+      - name: Install pinned publication runtime
         shell: bash
         run: |
           set -euo pipefail
-          python -m pip install --disable-pip-version-check torch==2.14.0 --index-url https://download.pytorch.org/whl/cpu
-          python -m pip install --disable-pip-version-check --constraint engine/constraints/p2-runtime-linux-py311.txt ./engine
+          python -m pip install --disable-pip-version-check --constraint engine/constraints/p2-runtime-linux-py311.txt pydantic
+          python -m pip install --disable-pip-version-check --no-deps ./engine
 
       - name: Verify reusable workflow and engine identity
         shell: bash
