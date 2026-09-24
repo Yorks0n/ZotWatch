@@ -1,6 +1,9 @@
 import re
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import yaml
 
@@ -67,6 +70,48 @@ def test_compute_checkout_contract_uses_job_workflow_identity():
     assert "actions/cache" not in text
     assert "profile.sqlite" not in text
     assert "secrets: inherit" not in text
+
+
+def test_config_inputs_reach_inspection_as_literal_arguments(tmp_path):
+    steps = _workflow("run.yml")["jobs"]["compute"]["steps"]
+    inspect = next(step for step in steps if step.get("id") == "config")
+    assert inspect["env"] == {
+        "INPUT_CONFIG_PATH": "${{ inputs['config-path'] }}",
+        "INPUT_EXPECTED_CONFIG_SHA": "${{ inputs['expected-config-sha'] }}",
+    }
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_python = fake_bin / "python"
+    fake_python.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, sys\n"
+        "with open(os.environ['CAPTURE_ARGS'], 'w') as output:\n"
+        "    json.dump(sys.argv[1:], output)\n"
+    )
+    fake_python.chmod(0o755)
+    config_path = "zotwatch.yaml'; touch config-injected; echo '"
+    expected_sha = "abc'; touch sha-injected; echo '"
+    capture = tmp_path / "args.json"
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+        "GITHUB_WORKSPACE": str(tmp_path),
+        "INPUT_CONFIG_PATH": config_path,
+        "INPUT_EXPECTED_CONFIG_SHA": expected_sha,
+        "CAPTURE_ARGS": str(capture),
+    }
+    script = inspect["run"].replace("${{ inputs.mode }}", "run").replace(
+        "${{ inputs['full-rebuild'] }}", "false"
+    )
+    subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path, env=env, check=True)
+    assert json.loads(capture.read_text()) == [
+        "-m", "zotwatch.workflow", "inspect-config", "--workspace",
+        str(tmp_path / "workspace"), "--config-path", config_path,
+        "--expected-config-sha", expected_sha, "--mode", "run",
+        "--full-rebuild", "false", "--github-output",
+    ]
+    assert not (tmp_path / "config-injected").exists()
+    assert not (tmp_path / "sha-injected").exists()
 
 
 def test_checkpoint_search_and_upload_contract_are_fixed():

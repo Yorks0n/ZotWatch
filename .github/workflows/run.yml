@@ -154,12 +154,15 @@ jobs:
 
       - name: Validate and inspect config offline
         id: config
+        env:
+          INPUT_CONFIG_PATH: ${{ inputs['config-path'] }}
+          INPUT_EXPECTED_CONFIG_SHA: ${{ inputs['expected-config-sha'] }}
         shell: bash
         run: >-
           python -m zotwatch.workflow inspect-config
           --workspace "$GITHUB_WORKSPACE/workspace"
-          --config-path '${{ inputs['config-path'] }}'
-          --expected-config-sha '${{ inputs['expected-config-sha'] }}'
+          --config-path "$INPUT_CONFIG_PATH"
+          --expected-config-sha "$INPUT_EXPECTED_CONFIG_SHA"
           --mode '${{ inputs.mode }}'
           --full-rebuild '${{ inputs['full-rebuild'] }}'
           --github-output
