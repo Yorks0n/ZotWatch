@@ -40,6 +40,7 @@ class EffectiveRuntimeConfig:
     publish_requested: bool = False
     journal_metrics: str = "legacy"
     feature_routes: tuple[ResolvedFeatureRoute, ...] = field(default=(), repr=False)
+    ranking_policy: str = "legacy-v1"
 
 
 def _fingerprint(payload: dict) -> str:
@@ -102,6 +103,9 @@ def load_effective_runtime(workspace: Path | str) -> EffectiveRuntimeConfig:
 
     config = loaded.config
     assert config is not None
+    if config.ranking.policy == "topic-v1" and (config.outputs.formats != ["json"] or config.outputs.publish):
+        from zotwatch.config import ConfigError
+        raise ConfigError("CONFIG_OPTION_UNSUPPORTED", "topic-v1 requires private JSON output in P5B1")
     safe_semantics = {
         "schema_version": config.schema_version,
         "zotero": {"library_type": config.zotero.library_type},
@@ -129,6 +133,7 @@ def load_effective_runtime(workspace: Path | str) -> EffectiveRuntimeConfig:
         publish_requested=config.outputs.publish,
         journal_metrics="bundled",
         feature_routes=loaded.routes,
+        ranking_policy=config.ranking.policy,
     )
 
 

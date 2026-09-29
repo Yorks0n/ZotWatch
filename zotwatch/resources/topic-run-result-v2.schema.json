@@ -1,0 +1,249 @@
+{
+  "$defs": {
+    "Evidence": {
+      "additionalProperties": false,
+      "properties": {
+        "feedback_commit_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Feedback Commit Sha",
+          "type": "string"
+        },
+        "profile_blob_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Profile Blob Sha",
+          "type": "string"
+        },
+        "semantic_input_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Semantic Input Sha256",
+          "type": "string"
+        },
+        "model_fingerprint": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Fingerprint"
+        },
+        "text_policy": {
+          "const": "topic-token-windows-128-mean-v1",
+          "default": "topic-token-windows-128-mean-v1",
+          "title": "Text Policy",
+          "type": "string"
+        }
+      },
+      "required": [
+        "feedback_commit_sha",
+        "profile_blob_sha",
+        "semantic_input_sha256"
+      ],
+      "title": "Evidence",
+      "type": "object"
+    },
+    "TopicRecommendation": {
+      "additionalProperties": false,
+      "properties": {
+        "work_key": {
+          "title": "Work Key",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Url"
+        },
+        "matched_interest_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Matched Interest Id",
+          "type": "string"
+        },
+        "raw_similarity": {
+          "maximum": 1,
+          "minimum": 0.35,
+          "title": "Raw Similarity",
+          "type": "number"
+        },
+        "priority_multiplier": {
+          "enum": [
+            0.8,
+            1.0,
+            1.2
+          ],
+          "title": "Priority Multiplier",
+          "type": "number"
+        },
+        "horizon_multiplier": {
+          "enum": [
+            1.0,
+            1.1
+          ],
+          "title": "Horizon Multiplier",
+          "type": "number"
+        },
+        "topic_relevance": {
+          "title": "Topic Relevance",
+          "type": "number"
+        },
+        "author_bonus": {
+          "enum": [
+            0.0,
+            0.02
+          ],
+          "title": "Author Bonus",
+          "type": "number"
+        },
+        "venue_bonus": {
+          "enum": [
+            0.0,
+            0.05
+          ],
+          "title": "Venue Bonus",
+          "type": "number"
+        },
+        "preference_bonus": {
+          "maximum": 0.05,
+          "minimum": 0,
+          "title": "Preference Bonus",
+          "type": "number"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "work_key",
+        "title",
+        "url",
+        "matched_interest_id",
+        "raw_similarity",
+        "priority_multiplier",
+        "horizon_multiplier",
+        "topic_relevance",
+        "author_bonus",
+        "venue_bonus",
+        "preference_bonus",
+        "score"
+      ],
+      "title": "TopicRecommendation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "zotwatch-topic-run-result",
+      "default": "zotwatch-topic-run-result",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 2,
+      "default": 2,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "ranking_policy": {
+      "const": "topic-v1",
+      "default": "topic-v1",
+      "title": "Ranking Policy",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "command": {
+      "enum": [
+        "profile",
+        "watch"
+      ],
+      "title": "Command",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "degraded",
+        "failed",
+        "not_ready",
+        "paused"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "exit_code": {
+      "enum": [
+        0,
+        3,
+        4,
+        5
+      ],
+      "title": "Exit Code",
+      "type": "integer"
+    },
+    "reason": {
+      "pattern": "^[A-Z_]+$",
+      "title": "Reason",
+      "type": "string"
+    },
+    "evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Evidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "state_generation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "State Generation Id"
+    },
+    "recommendations": {
+      "items": {
+        "$ref": "#/$defs/TopicRecommendation"
+      },
+      "maxItems": 200,
+      "title": "Recommendations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "command",
+    "status",
+    "exit_code",
+    "reason"
+  ],
+  "title": "TopicRunResult",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

@@ -6,6 +6,7 @@ from .models import RunError
 
 
 ERROR_MESSAGES = {
+    "INTEREST_POLICY_MISMATCH": "Confirmed interests require the topic policy or could not be read safely.",
     "CONFIG_INVALID": "Configuration could not be validated.",
     "CONFIG_MIXED_MODES": "Legacy and v2 configuration cannot be used together.",
     "CONFIG_OPTION_UNSUPPORTED": "This command option is unavailable for the selected configuration.",

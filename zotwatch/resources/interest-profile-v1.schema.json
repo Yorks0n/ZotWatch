@@ -1,0 +1,192 @@
+{
+  "$defs": {
+    "Confirmation": {
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "const": "confirmed",
+          "title": "State",
+          "type": "string"
+        },
+        "request_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "confirmed_at": {
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}Z$",
+          "title": "Confirmed At",
+          "type": "string"
+        }
+      },
+      "required": [
+        "state",
+        "request_id",
+        "confirmed_at"
+      ],
+      "title": "Confirmation",
+      "type": "object"
+    },
+    "LibraryScope": {
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "user",
+          "title": "Type",
+          "type": "string"
+        },
+        "id": {
+          "pattern": "^[1-9][0-9]{0,19}$",
+          "title": "Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "id"
+      ],
+      "title": "LibraryScope",
+      "type": "object"
+    },
+    "Preferences": {
+      "additionalProperties": false,
+      "properties": {
+        "authors": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Authors",
+          "type": "array"
+        },
+        "venues": {
+          "items": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "\\S",
+            "type": "string"
+          },
+          "maxItems": 20,
+          "title": "Venues",
+          "type": "array"
+        }
+      },
+      "required": [
+        "authors",
+        "venues"
+      ],
+      "title": "Preferences",
+      "type": "object"
+    },
+    "Topic": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "maxLength": 80,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "maxLength": 1000,
+          "minLength": 1,
+          "pattern": "\\S",
+          "title": "Description",
+          "type": "string"
+        },
+        "priority": {
+          "enum": [
+            "low",
+            "normal",
+            "high"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "muted"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "horizon": {
+          "enum": [
+            "long_term",
+            "short_term"
+          ],
+          "title": "Horizon",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "description",
+        "priority",
+        "status",
+        "horizon"
+      ],
+      "title": "Topic",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "ranking_policy": {
+      "const": "topic-v1",
+      "title": "Ranking Policy",
+      "type": "string"
+    },
+    "workspace_repository_id": {
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "title": "Workspace Repository Id",
+      "type": "integer"
+    },
+    "library_scope": {
+      "$ref": "#/$defs/LibraryScope"
+    },
+    "confirmation": {
+      "$ref": "#/$defs/Confirmation"
+    },
+    "interests": {
+      "items": {
+        "$ref": "#/$defs/Topic"
+      },
+      "maxItems": 20,
+      "title": "Interests",
+      "type": "array"
+    },
+    "preferences": {
+      "$ref": "#/$defs/Preferences"
+    }
+  },
+  "required": [
+    "schema_version",
+    "ranking_policy",
+    "workspace_repository_id",
+    "library_scope",
+    "confirmation",
+    "interests",
+    "preferences"
+  ],
+  "title": "Profile",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

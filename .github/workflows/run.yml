@@ -191,7 +191,7 @@ jobs:
           --context-output "$RUNNER_TEMP/zotwatch-workflow-context.json"
 
       - name: Run full profile before watch
-        if: inputs.mode == 'run' && inputs.full-rebuild
+        if: inputs.mode == 'run' && inputs.full-rebuild && steps.config.outputs.ranking-policy != 'topic-v1'
         id: pre-profile
         env:
           ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
@@ -215,7 +215,7 @@ jobs:
           exit 0
 
       - name: Validate full-profile result
-        if: inputs.mode == 'run' && inputs.full-rebuild
+        if: inputs.mode == 'run' && inputs.full-rebuild && steps.config.outputs.ranking-policy != 'topic-v1'
         id: pre-profile-result
         shell: bash
         run: >-
@@ -230,9 +230,11 @@ jobs:
           --github-output
 
       - name: Run engine
-        if: inputs.mode != 'validate' && (!inputs.full-rebuild || inputs.mode == 'profile' || steps.pre-profile-result.outputs.status == 'succeeded')
+        if: inputs.mode != 'validate' && (steps.config.outputs.ranking-policy == 'topic-v1' || !inputs.full-rebuild || inputs.mode == 'profile' || steps.pre-profile-result.outputs.status == 'succeeded')
         id: invoke
         env:
+          GITHUB_TOKEN: ${{ github.token }}
+          INPUT_RANKING_POLICY: ${{ steps.config.outputs.ranking-policy }}
           ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
           ZOTERO_API_KEY: ${{ secrets.ZOTERO_API_KEY }}
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
@@ -252,6 +254,7 @@ jobs:
           set +e
           command=watch
           extra=()
+          if [[ "$INPUT_RANKING_POLICY" == "topic-v1" && "$INPUT_FULL" == "true" ]]; then extra+=(--full); fi
           if [[ "$INPUT_MODE" == "profile" ]]; then
             command=profile
             if [[ "$INPUT_FULL" == "true" ]]; then extra+=(--full); fi
@@ -317,13 +320,13 @@ jobs:
         id: upload-private
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zotwatch-private-run-v1
+          name: ${{ steps.config.outputs.ranking-policy == 'topic-v1' && 'zotwatch-private-topic-run-v2' || 'zotwatch-private-run-v1' }}
           path: ${{ runner.temp }}/zotwatch-operational
           if-no-files-found: error
           retention-days: 30
 
       - name: Upload private recommendation result
-        if: steps.result.outputs.status == 'succeeded' || steps.result.outputs.status == 'degraded'
+        if: steps.config.outputs.ranking-policy != 'topic-v1' && (steps.result.outputs.status == 'succeeded' || steps.result.outputs.status == 'degraded')
         id: upload-report
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -355,6 +358,6 @@ jobs:
           overwrite: true
 
       - name: Propagate engine result
-        if: inputs.mode != 'validate' && steps.aggregate.outputs.result-status != 'succeeded'
+        if: inputs.mode != 'validate' && steps.aggregate.outputs.result-status != 'succeeded' && steps.aggregate.outputs.result-status != 'not_ready' && steps.aggregate.outputs.result-status != 'paused'
         shell: bash
         run: exit 1

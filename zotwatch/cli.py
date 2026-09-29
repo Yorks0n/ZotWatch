@@ -141,6 +141,18 @@ def _run_v2(arguments: list[str]) -> int:
         return _emit_result(result, machine=args.machine_result)
     recorder.start("config_validation")
     recorder.finish("config_validation")
+    if effective.ranking_policy == "topic-v1":
+        from zotwatch.interests.runner import run
+        return _emit_result(run(args, paths, effective), machine=args.machine_result)
+    if args.command == "watch":
+        from zotwatch.interests.runner import load_snapshot
+        try:
+            if load_snapshot(paths.workspace) is not None:
+                raise ValueError("Topic profile requires topic policy")
+        except Exception:
+            recorder.fail("config_validation", "INTEREST_POLICY_MISMATCH")
+            return _emit_result(recorder.finalize(status="failed", exit_code=2,
+                                error_code="INTEREST_POLICY_MISMATCH"), machine=args.machine_result)
     recorder.start("credential_preflight")
     report = preflight(effective)
     if not report.ready:
@@ -185,7 +197,10 @@ def _emit_result(result, *, machine: bool) -> int:
     if machine:
         print(result.model_dump_json())
     elif result.status == "failed":
-        print(f"{result.error.code}: {result.error.message}", file=sys.stderr)
+        if hasattr(result, "reason"):
+            print(result.reason, file=sys.stderr)
+        else:
+            print(f"{result.error.code}: {result.error.message}", file=sys.stderr)
     else:
         print(f"Run {result.run_id} {result.status}.")
     return result.exit_code

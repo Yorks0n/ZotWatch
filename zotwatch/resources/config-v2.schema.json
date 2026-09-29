@@ -304,7 +304,10 @@
           "type": "number"
         },
         "policy": {
-          "const": "legacy-v1",
+          "enum": [
+            "legacy-v1",
+            "topic-v1"
+          ],
           "title": "Policy",
           "type": "string"
         },

@@ -37,7 +37,7 @@ class CandidatesConfigV2(StrictConfigModel):
 
 
 class RankingConfigV2(StrictConfigModel):
-    policy: Literal["legacy-v1"]
+    policy: Literal["legacy-v1", "topic-v1"]
     top_n: int = Field(ge=1, le=200)
     max_preprint_ratio: Literal[0.3]
 

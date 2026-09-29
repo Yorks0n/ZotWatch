@@ -113,6 +113,28 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "export-checkpoint":
             _export(args)
         elif args.command == "seal-result":
+            topic = Path(args.private) / "final" / "topic-result-v2.json"
+            if not topic.exists():
+                topic = Path(args.private) / "profile" / "topic-result-v2.json"
+            if topic.exists():
+                from zotwatch.interests.results import parse_result
+                value = parse_result(topic.read_bytes())
+                if value.run_id != args.run_id or value.status != args.status or args.publish_requested != "false":
+                    raise ValueError("INTEREST_RESULT_INVALID")
+                from .identity import FULL_SHA
+                if not FULL_SHA.fullmatch(args.engine_sha):
+                    raise ValueError("INTEREST_ENGINE_INVALID")
+                envelope = {
+                    "schema_name": "zotwatch-topic-workflow-envelope", "schema_version": 2,
+                    "engine_sha": args.engine_sha, "workspace_repository_id": args.repository_id,
+                    "caller_run_id": args.caller_run_id, "run_id": value.run_id,
+                    "result_status": value.status, "publish_requested": False,
+                    "evidence": value.evidence.model_dump() if value.evidence else None,
+                }
+                target = Path(args.private) / "topic-workflow-envelope-v2.json"
+                with target.open("x", encoding="utf-8") as stream:
+                    stream.write(json.dumps(envelope) + "\n")
+                return 0
             from .results import seal_private_result
 
             seal_private_result(
@@ -170,6 +192,7 @@ def _inspect_config(args) -> None:
     payload = {
         "config_fingerprint_sha256": effective.config_fingerprint_sha256,
         "publish_requested": str(effective.publish_requested).lower(),
+        "ranking_policy": effective.ranking_policy,
     }
     _emit(payload)
     if args.github_output:
@@ -226,6 +249,17 @@ def _restore(args) -> None:
 
 def _result(args) -> None:
     from .results import validate_and_materialize_result
+
+    if json.loads(Path(args.machine_result).read_bytes()).get("schema_name") == "zotwatch-topic-run-result":
+        from zotwatch.interests.results import materialize
+        value = materialize(Path(args.machine_result), args.process_exit_code, Path(args.state), Path(args.private))
+        summary = {"run_id": value.run_id, "status": value.status, "exit_code": value.exit_code,
+                   "state_generation_id": value.state_generation_id, "output_generation_id": None}
+        Path(args.summary_output).write_text(json.dumps(summary) + "\n")
+        _emit(summary)
+        if args.github_output:
+            _write_github_output(summary)
+        return
 
     validated = validate_and_materialize_result(
         args.machine_result,
