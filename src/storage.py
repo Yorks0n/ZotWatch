@@ -217,8 +217,8 @@ class ProfileStorage:
             conn.rollback()
             raise
 
-    def iter_items(self) -> Iterable[ZoteroItem]:
-        cur = self.connect().execute("SELECT * FROM items")
+    def iter_items(self, *, ordered: bool = False) -> Iterable[ZoteroItem]:
+        cur = self.connect().execute("SELECT * FROM items" + (" ORDER BY key" if ordered else ""))
         for row in cur:
             yield _row_to_item(row)
 

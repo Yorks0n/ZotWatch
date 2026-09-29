@@ -335,6 +335,29 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      - name: Export bounded private interest suggestions
+        if: steps.config.outputs.ranking-policy == 'topic-v1' && steps.result.outputs.status == 'succeeded'
+        shell: bash
+        run: >-
+          python -m zotwatch.workflow export-suggestions
+          --state "$RUNNER_TEMP/zotwatch-state"
+          --machine-result "$RUNNER_TEMP/machine-result.json"
+          --destination "$RUNNER_TEMP/zotwatch-interest-suggestions"
+          --engine-sha '${{ steps.identity.outputs.engine-sha }}'
+          --repository-id '${{ github.repository_id }}'
+          --caller-run-id '${{ github.run_id }}'
+          --caller-run-attempt '${{ github.run_attempt }}'
+
+      - name: Upload bounded private interest suggestions
+        if: steps.config.outputs.ranking-policy == 'topic-v1' && steps.result.outputs.status == 'succeeded'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zotwatch-interest-suggestions-v1
+          path: ${{ runner.temp }}/zotwatch-interest-suggestions/interest-suggestions-v1.json
+          if-no-files-found: error
+          retention-days: 30
+          overwrite: true
+
       - name: Export successful private checkpoint
         if: steps.aggregate.outputs.result-status == 'succeeded' && inputs.mode != 'validate'
         shell: bash

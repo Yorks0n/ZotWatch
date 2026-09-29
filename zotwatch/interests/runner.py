@@ -64,6 +64,10 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                     paths.workspace, effective.settings, storage, state_root=paths.state,
                     manager=manager, vectorizer=vectorizer, lease=lease, force=args.full or args.weekly)
                 generation = handle.generation_id
+                from .suggestions import write_projection
+                builder = engine.build_profile_module.ProfileBuilder(paths.workspace, storage,
+                    effective.settings, vectorizer=vectorizer, state_dir=paths.state)
+                write_projection(paths.state, run_id, builder.suggest_interests())
                 if args.command == "profile":
                     return finish("succeeded", "PROFILE_BUILT")
                 descriptor = descriptor_for_vectorizer(vectorizer)

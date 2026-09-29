@@ -67,6 +67,12 @@ def _parser() -> argparse.ArgumentParser:
     seal.add_argument("--status", required=True)
     seal.add_argument("--publish-requested", choices=("true", "false"), required=True)
 
+    suggestions = subparsers.add_parser("export-suggestions")
+    for field in ("state", "machine-result", "destination", "engine-sha"):
+        suggestions.add_argument("--" + field, required=True)
+    for field in ("repository-id", "caller-run-id", "caller-run-attempt"):
+        suggestions.add_argument("--" + field, required=True, type=int)
+
     pages = subparsers.add_parser("pages")
     pages.add_argument("--private", required=True)
     pages.add_argument("--reports", required=True)
@@ -112,6 +118,11 @@ def main(argv: list[str] | None = None) -> int:
             _result(args)
         elif args.command == "export-checkpoint":
             _export(args)
+        elif args.command == "export-suggestions":
+            from zotwatch.interests.suggestions import export_summary
+            export_summary(Path(args.state), Path(args.machine_result), Path(args.destination),
+                engine_sha=args.engine_sha, workspace_repository_id=args.repository_id,
+                caller_run_id=args.caller_run_id, caller_run_attempt=args.caller_run_attempt)
         elif args.command == "seal-result":
             topic = Path(args.private) / "final" / "topic-result-v2.json"
             if not topic.exists():

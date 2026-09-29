@@ -92,6 +92,11 @@ class ProfileBuilder:
         logger.info("Published computational state generation %s", handle.generation_id)
         return self.artifacts
 
+    def suggest_interests(self):
+        """Independent bounded projection, including when vector state is reused."""
+        from zotwatch.interests.suggestions import project
+        return project(self.storage.iter_items(ordered=True))
+
     def _summarize(self, items: List[ZoteroItem], vectors: np.ndarray) -> dict:
         authors = Counter()
         venues = Counter()
