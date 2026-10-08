@@ -54,9 +54,6 @@ on:
         value: ${{ jobs.compute.outputs.result-status }}
       run-id:
         value: ${{ jobs.compute.outputs.run-id }}
-      staging-audit:
-        type: boolean
-        default: false
       request-id:
         value: ${{ jobs.compute.outputs.request-id }}
       engine-sha:
