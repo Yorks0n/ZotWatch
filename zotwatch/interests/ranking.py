@@ -38,7 +38,7 @@ def encode_texts(vectorizer, texts):
     return np.asarray(rows)
 
 
-def rank(profile: Profile, candidates, vectorizer, *, encode=encode_texts):
+def rank(profile: Profile, candidates, vectorizer, *, encode=encode_texts, diagnostic=None):
     active = sorted((t for t in profile.interests if t.status == "active"), key=lambda t: t.id)
     if not active or not candidates:
         return []
@@ -54,8 +54,10 @@ def rank(profile: Profile, candidates, vectorizer, *, encode=encode_texts):
         matches = [(float(s) * PRIORITY[t.priority] * HORIZON[t.horizon], t, float(s))
                    for t, s in zip(active, row) if s >= SEMANTIC_THRESHOLD]
         if not matches:
+            if diagnostic: diagnostic(candidate, {t.id: float(s) for t, s in zip(active, row)}, None)
             continue
         relevance, topic, raw = max(matches, key=lambda value: value[0])
+        if diagnostic: diagnostic(candidate, {t.id: float(s) for t, s in zip(active, row)}, topic.id)
         author = 0.02 if any(a.lower() in authors for a in candidate.authors) else 0.0
         venue = 0.05 if candidate.venue and candidate.venue.lower() in venues else 0.0
         bonus = min(0.05, author + venue)

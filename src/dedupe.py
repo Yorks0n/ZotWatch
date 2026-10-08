@@ -29,7 +29,7 @@ class DedupeEngine:
                 self.existing_ids.add(_normalize_identifier(item.url))
             self.existing_titles.append(_normalize_title(item.title))
 
-    def filter(self, candidates: Iterable[CandidateWork]) -> List[CandidateWork]:
+    def filter(self, candidates: Iterable[CandidateWork], *, diagnostic=None) -> List[CandidateWork]:
         source = list(candidates)
         deduped: List[CandidateWork] = []
         candidate_titles: List[str] = []
@@ -41,14 +41,18 @@ class DedupeEngine:
             title = _normalize_title(work.title)
 
             if doi and doi in self.existing_doi:
+                if diagnostic: diagnostic(work, "library_doi_duplicate")
                 logger.debug("Skipping %s due to DOI duplication", work.identifier)
                 continue
             if doi and doi in seen_keys:
+                if diagnostic: diagnostic(work, "candidate_doi_duplicate")
                 continue
             if key in self.existing_ids or key in seen_keys:
+                if diagnostic: diagnostic(work, "library_identifier_duplicate" if key in self.existing_ids else "candidate_identifier_duplicate")
                 logger.debug("Skipping %s due to identifier duplication", work.identifier)
                 continue
             if self._is_title_duplicate(title) or _is_title_in_list(title, candidate_titles, self.title_threshold):
+                if diagnostic: diagnostic(work, "library_title_similarity" if self._is_title_duplicate(title) else "candidate_title_similarity")
                 logger.debug("Skipping %s due to title similarity", work.identifier)
                 continue
 

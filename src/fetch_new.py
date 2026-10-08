@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import json
 import html
 import re
@@ -456,6 +457,9 @@ class CandidateFetcher:
                         extra={
                             "source": "top_venue",
                             "type": item.get("type"),
+                            **({"diagnostic_publication_dates": {
+                                field: item[field] for field in ("published", "published-online", "published-print", "issued")
+                                if field in item}} if os.getenv("ZOTWATCH_PRIVATE_FILTER_DIAGNOSTIC") == "1" else {}),
                         },
                     )
                 )

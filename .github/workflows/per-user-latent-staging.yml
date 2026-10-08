@@ -283,6 +283,7 @@ jobs:
           INPUT_MODE: ${{ inputs.mode }}
           INPUT_FULL: ${{ inputs['full-rebuild'] }}
           INPUT_CANDIDATE_POLICY: ${{ inputs['candidate-policy'] }}
+          ZOTWATCH_PRIVATE_FILTER_DIAGNOSTIC: '1'
         shell: bash
         run: |
           set +e
@@ -349,6 +350,15 @@ jobs:
           --private "$RUNNER_TEMP/zotwatch-operational/final"
           --summary-output "$RUNNER_TEMP/result-summary.json"
           --github-output
+
+      - name: Upload private stage filter diagnostic
+        if: inputs.mode == 'run' && steps.result.outputs.status == 'succeeded'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zotwatch-private-filter-diagnostic-v1
+          path: ${{ runner.temp }}/zotwatch-state/runs/filter-diagnostic-${{ steps.result.outputs.run-id }}.json
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Select authoritative result
         id: aggregate
