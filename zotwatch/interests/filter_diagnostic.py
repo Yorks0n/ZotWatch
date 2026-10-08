@@ -48,7 +48,7 @@ class FilterDiagnostic:
             if work.extra.get("source") == "top_venue":
                 self.data["crossref_dates"].append({"work_key": key(work), "group": group(work),
                     "first_occurrence_selected": unique[key(work)] is work,
-                    "created_date": work.extra.get("doi_created_at") or (work.published.isoformat() if work.published else None),
+                    "created_date": work.extra.get("doi_created_at") if "publication_precision" in work.extra else (work.published.isoformat() if work.published else None),
                     "publication_dates": work.extra.get("diagnostic_publication_dates", {})})
         self.works = unique
         for ident, work in unique.items():
