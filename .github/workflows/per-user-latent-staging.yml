@@ -12,6 +12,9 @@ on:
       full-rebuild:
         type: boolean
         default: false
+      staging-audit:
+        type: boolean
+        default: false
       request-id:
         type: string
         default: ""
@@ -51,6 +54,9 @@ on:
         value: ${{ jobs.compute.outputs.result-status }}
       run-id:
         value: ${{ jobs.compute.outputs.run-id }}
+      staging-audit:
+        type: boolean
+        default: false
       request-id:
         value: ${{ jobs.compute.outputs.request-id }}
       engine-sha:
@@ -312,6 +318,25 @@ jobs:
           if [[ -f "$RUNNER_TEMP/zotwatch-state/latent-state-v1/current.json" ]]; then
             python -m zotwatch.interests.lifecycle_transport publish --state "$RUNNER_TEMP/zotwatch-state"
           fi
+
+      - name: Audit isolated real per-user state lifecycle
+        if: inputs.staging-audit && steps.invoke.outcome == 'success'
+        shell: bash
+        run: >-
+          python engine/scripts/audit_per_user_lifecycle.py
+          --source "$RUNNER_TEMP/zotwatch-state"
+          --output "$RUNNER_TEMP/zotwatch-lifecycle-audit"
+          --cache "$RUNNER_TEMP/zotwatch-encoder/hub"
+          --repository-id '${{ github.repository_id }}'
+
+      - name: Upload private lifecycle audit evidence
+        if: inputs.staging-audit && steps.invoke.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zotwatch-private-latent-lifecycle-audit-v1
+          path: ${{ runner.temp }}/zotwatch-lifecycle-audit/evidence.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Validate finalized engine result
         if: steps.invoke.outcome == 'success'
