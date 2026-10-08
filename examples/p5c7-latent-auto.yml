@@ -7,9 +7,9 @@ permissions:
   actions: read
 jobs:
   lifecycle:
-    uses: Yorks0n/ZotWatch/.github/workflows/per-user-latent-staging.yml@ENGINE_SHA
+    uses: Yorks0n/ZotWatch/.github/workflows/per-user-latent-staging.yml@104561800dd0d7d0c7836dde81e850450111ddee
     with:
-      config-path: zotwatch-latent-auto.yaml
+      config-path: zotwatch.yaml
       mode: run
       candidate-policy: center-recall-v1
     secrets:

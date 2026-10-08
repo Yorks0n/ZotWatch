@@ -106,6 +106,15 @@ jobs:
           path: workspace
           persist-credentials: false
 
+      - name: Select isolated latent-auto staging configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          # P2 keeps its exact zotwatch.yaml path; only this temporary checkout changes.
+          if [[ -f workspace/zotwatch-latent-auto.yaml ]]; then
+            cp -- workspace/zotwatch-latent-auto.yaml workspace/zotwatch.yaml
+          fi
+
       - name: Checkout exact central engine
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
