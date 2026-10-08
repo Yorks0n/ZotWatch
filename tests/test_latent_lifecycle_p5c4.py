@@ -197,3 +197,65 @@ def test_readiness_still_precedes_per_user_lifecycle(pipeline, monkeypatch):
     monkeypatch.setattr(lc,'load_runtime',lambda *a: pytest.fail('readiness first'))
     r=runner.run(integrated_args(latent_lifecycle='per-user-v1'), paths,effective,snapshot_loader=lambda _:None)
     assert (r.status,r.reason)==('not_ready','INTEREST_NOT_READY')
+
+@pytest.mark.parametrize('name,kind', [('../current.json',tarfile.REGTYPE), ('current.json',tarfile.SYMTYPE), ('generations/evil/model.json',tarfile.REGTYPE)])
+def test_archive_rejects_paths_and_links_before_install(tmp_path,name,kind):
+    stream=io.BytesIO()
+    with tarfile.open(fileobj=stream,mode='w:gz') as archive:
+        m=tarfile.TarInfo(name);m.type=kind;m.size=2 if kind==tarfile.REGTYPE else 0
+        archive.addfile(m,io.BytesIO(b'{}') if m.size else None)
+    with pytest.raises(ValueError):unpack(stream.getvalue(),tmp_path,42)
+    assert not lc.LifecycleStore(tmp_path).root.exists()
+
+
+def test_durable_transport_numeric_private_identity_and_remote_cas(store, tmp_path):
+    from zotwatch.interests.lifecycle_transport import GitState, BRANCH
+    # Model actual Git fast-forward behavior rather than optimistic last-writer-wins.
+    class Response:
+        def __init__(self,row,code=200):self.row=row;self.status_code=code
+        def json(self):return self.row
+        def raise_for_status(self):
+            if self.status_code>=400:raise ValueError('Git API rejects non-fast-forward')
+    class Git:
+        def __init__(self):self.head=None;self.counter=0;self.blobs={};self.trees={};self.commits={};self.race=False
+        def request(self,method,url,headers,json,timeout):
+            path=url.split('/owner/private')[1]
+            if path=='':return Response({'id':42,'private':True})
+            if method=='GET' and path.startswith('/git/ref/'):
+                return Response({'object':{'sha':self.head}}) if self.head else Response({},404)
+            if method=='GET' and path.startswith('/git/commits/'):
+                return Response(self.commits[path.rsplit('/',1)[1]])
+            if method=='GET' and path.startswith('/git/trees/'):
+                return Response({'truncated':False,'tree':self.trees[path.rsplit('/',1)[1]]})
+            if method=='GET' and path.startswith('/git/blobs/'):
+                return Response(self.blobs[path.rsplit('/',1)[1]])
+            self.counter+=1;sha=f'{self.counter:040x}'
+            if path=='/git/blobs':
+                import base64
+                from hashlib import sha1
+                raw=base64.b64decode(json['content']);sha=sha1(b'blob '+str(len(raw)).encode()+b'\0'+raw).hexdigest()
+                self.blobs[sha]={**json,'size':len(raw)}
+            elif path=='/git/trees':
+                entry=json['tree'][0];self.trees[sha]=[{**entry,'size':self.blobs[entry['sha']]['size']}]
+            elif path=='/git/commits':self.commits[sha]={**json,'tree':{'sha':json['tree']}}
+            elif path.startswith('/git/refs'):
+                new=json['sha']
+                if self.race:self.head='f'*40;self.race=False
+                if (method=='POST' and self.head is not None) or (method=='PATCH' and self.commits[new]['parents']!=[self.head]):return Response({},422)
+                self.head=new
+            return Response({'sha':sha})
+    ensure(store)
+    git=Git()
+    with pytest.raises(ValueError):GitState('owner/private',99,'token',git)
+    first=GitState('owner/private',42,'token',git)
+    # Restore authority exists before any upload; no transient artifact dependency.
+    assert first.restore(tmp_path/'fresh') is None
+    import shutil
+    shutil.copyfile(tmp_path/'fresh/latent-remote-v1.json',store[0].state/'latent-remote-v1.json')
+    first.publish(store[0].state)
+    second=GitState('owner/private',42,'token',git)
+    second.restore(tmp_path/'next')
+    assert lc.LifecycleStore(tmp_path/'next').current()==store[0].current()
+    git.race=True
+    with pytest.raises(ValueError):second.publish(tmp_path/'next')
+    assert git.head=='f'*40

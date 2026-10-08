@@ -26,8 +26,9 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
     evidence, generation = None, None
     per_user = getattr(args, "latent_lifecycle", None) == "per-user-v1"
     deployment = None
-    repository_id = int(os.getenv("GITHUB_REPOSITORY_ID") or os.getenv("ZOTWATCH_WORKSPACE_REPOSITORY_ID", "0"))
+    repository_id = 0
     if per_user:
+        repository_id = int(os.getenv("GITHUB_REPOSITORY_ID") or os.getenv("ZOTWATCH_WORKSPACE_REPOSITORY_ID", "0"))
         from .lifecycle import LifecycleStore, load_runtime, RunDeploymentEvidence
         lifecycle = LifecycleStore(paths.state)
     integrated = getattr(args, "candidate_policy", "confirmed-topic-candidates-v1") == "center-recall-v1"
@@ -103,8 +104,8 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                     from .recall_integration import LatentRecallUnavailable, encoder_cache
                     cache_path = getattr(args, "latent_encoder_cache", None) or encoder_cache()
                     try:
-                        lifecycle.ensure(storage, repository_id, engine._library_identity(effective.settings),
-                            cache_path, manual=args.full or args.weekly, lease=lease)
+                        deployment, _, _ = lifecycle.ensure(storage, repository_id, engine._library_identity(effective.settings),
+                            cache_path, manual=args.full, lease=lease)
                         if integrated:
                             deployment, recall_runtime = load_runtime(lifecycle, repository_id,
                                 engine._library_identity(effective.settings), cache_path)

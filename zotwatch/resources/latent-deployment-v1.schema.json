@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "EncoderIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "model_identifier": {
+          "const": "sentence-transformers/all-MiniLM-L6-v2",
+          "title": "Model Identifier",
+          "type": "string"
+        },
+        "model_revision": {
+          "const": "1110a243fdf4706b3f48f1d95db1a4f5529b4d41",
+          "title": "Model Revision",
+          "type": "string"
+        },
+        "dimension": {
+          "const": 384,
+          "title": "Dimension",
+          "type": "integer"
+        },
+        "text_policy": {
+          "const": "title-abstract-token-windows-128-roundtrip-safe-mean-v2",
+          "title": "Text Policy",
+          "type": "string"
+        },
+        "artifact_sha256": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "maxProperties": 32,
+          "minProperties": 1,
+          "title": "Artifact Sha256",
+          "type": "object"
+        }
+      },
+      "required": [
+        "model_identifier",
+        "model_revision",
+        "dimension",
+        "text_policy",
+        "artifact_sha256"
+      ],
+      "title": "EncoderIdentity",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "zotwatch-latent-deployment",
+      "default": "zotwatch-latent-deployment",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "deployment_revision": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Deployment Revision",
+      "type": "string"
+    },
+    "previous_deployment_revision": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Previous Deployment Revision"
+    },
+    "workspace_repository_id": {
+      "exclusiveMinimum": 0,
+      "title": "Workspace Repository Id",
+      "type": "integer"
+    },
+    "library_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Library Identity Sha256",
+      "type": "string"
+    },
+    "library_revision": {
+      "minimum": 0,
+      "title": "Library Revision",
+      "type": "integer"
+    },
+    "input_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Input Sha256",
+      "type": "string"
+    },
+    "interest_model_revision": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Interest Model Revision",
+      "type": "string"
+    },
+    "model_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Model Sha256",
+      "type": "string"
+    },
+    "generation_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Generation Sha256",
+      "type": "string"
+    },
+    "formation_policy": {
+      "const": "auto-spherical-size-v1/abstract-required-v2/membership-qualification-experimental-v1/trim-once",
+      "default": "auto-spherical-size-v1/abstract-required-v2/membership-qualification-experimental-v1/trim-once",
+      "title": "Formation Policy",
+      "type": "string"
+    },
+    "encoder": {
+      "$ref": "#/$defs/EncoderIdentity"
+    },
+    "embedding_text_fingerprint": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Embedding Text Fingerprint",
+      "type": "string"
+    },
+    "activated_at": {
+      "title": "Activated At",
+      "type": "string"
+    },
+    "activation_reason": {
+      "enum": [
+        "initial",
+        "library_changed",
+        "model_changed",
+        "manual",
+        "material_library_change",
+        "rollback"
+      ],
+      "title": "Activation Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "deployment_revision",
+    "workspace_repository_id",
+    "library_identity_sha256",
+    "library_revision",
+    "input_sha256",
+    "interest_model_revision",
+    "model_sha256",
+    "generation_sha256",
+    "encoder",
+    "embedding_text_fingerprint",
+    "activated_at",
+    "activation_reason"
+  ],
+  "title": "Deployment",
+  "type": "object"
+}

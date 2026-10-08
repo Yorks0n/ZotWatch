@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$defs": {
+    "InputRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "abstract": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Abstract"
+        },
+        "doi": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Doi"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "abstract",
+        "doi"
+      ],
+      "title": "InputRecord",
+      "type": "object"
+    },
+    "LatentCenter": {
+      "additionalProperties": false,
+      "properties": {
+        "interest_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Interest Id",
+          "type": "string"
+        },
+        "centroid": {
+          "items": {
+            "type": "number"
+          },
+          "minItems": 1,
+          "title": "Centroid",
+          "type": "array"
+        },
+        "member_keys": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 3,
+          "title": "Member Keys",
+          "type": "array"
+        },
+        "member_count": {
+          "minimum": 3,
+          "title": "Member Count",
+          "type": "integer"
+        },
+        "cohesion": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Cohesion",
+          "type": "number"
+        },
+        "stability": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Stability",
+          "type": "number"
+        },
+        "representative_items": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Representative Items",
+          "type": "array"
+        },
+        "model_revision": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Model Revision",
+          "type": "string"
+        },
+        "previous_interest_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Previous Interest Ids",
+          "type": "array"
+        },
+        "change": {
+          "enum": [
+            "new",
+            "stable",
+            "changed",
+            "split",
+            "merged",
+            "reorganized"
+          ],
+          "title": "Change",
+          "type": "string"
+        },
+        "semantic_refresh_required": {
+          "title": "Semantic Refresh Required",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "interest_id",
+        "centroid",
+        "member_keys",
+        "member_count",
+        "cohesion",
+        "stability",
+        "representative_items",
+        "model_revision",
+        "change",
+        "semantic_refresh_required"
+      ],
+      "title": "LatentCenter",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "zotwatch-latent-generation",
+      "default": "zotwatch-latent-generation",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "model_revision": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Model Revision",
+      "type": "string"
+    },
+    "workspace_repository_id": {
+      "exclusiveMinimum": 0,
+      "title": "Workspace Repository Id",
+      "type": "integer"
+    },
+    "library_identity_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Library Identity Sha256",
+      "type": "string"
+    },
+    "library_revision": {
+      "minimum": 0,
+      "title": "Library Revision",
+      "type": "integer"
+    },
+    "input_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Input Sha256",
+      "type": "string"
+    },
+    "input_records": {
+      "items": {
+        "$ref": "#/$defs/InputRecord"
+      },
+      "maxItems": 20000,
+      "title": "Input Records",
+      "type": "array"
+    },
+    "built_at": {
+      "title": "Built At",
+      "type": "string"
+    },
+    "formation_policy": {
+      "const": "auto-spherical-size-v1/abstract-required-v2/membership-qualification-experimental-v1/trim-once",
+      "default": "auto-spherical-size-v1/abstract-required-v2/membership-qualification-experimental-v1/trim-once",
+      "title": "Formation Policy",
+      "type": "string"
+    },
+    "embedding_fingerprint": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Embedding Fingerprint",
+      "type": "string"
+    },
+    "clustering_runtime": {
+      "title": "Clustering Runtime",
+      "type": "string"
+    },
+    "item_text_hashes": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Item Text Hashes",
+      "type": "object"
+    },
+    "embedding_keys": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Embedding Keys",
+      "type": "array"
+    },
+    "embeddings_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Embeddings Sha256",
+      "type": "string"
+    },
+    "model_sha256": {
+      "pattern": "^[0-9a-f]{64}$",
+      "title": "Model Sha256",
+      "type": "string"
+    },
+    "previous_model_revision": {
+      "anyOf": [
+        {
+          "pattern": "^[0-9a-f]{32}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Previous Model Revision"
+    },
+    "centers": {
+      "items": {
+        "$ref": "#/$defs/LatentCenter"
+      },
+      "maxItems": 60,
+      "title": "Centers",
+      "type": "array"
+    },
+    "formation": {
+      "title": "Formation",
+      "type": "object"
+    }
+  },
+  "required": [
+    "model_revision",
+    "workspace_repository_id",
+    "library_identity_sha256",
+    "library_revision",
+    "input_sha256",
+    "input_records",
+    "built_at",
+    "embedding_fingerprint",
+    "clustering_runtime",
+    "item_text_hashes",
+    "embedding_keys",
+    "embeddings_sha256",
+    "model_sha256",
+    "centers",
+    "formation"
+  ],
+  "title": "Generation",
+  "type": "object"
+}

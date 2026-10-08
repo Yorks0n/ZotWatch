@@ -133,12 +133,20 @@ class LifecycleStore:
         p = self.root / "current.json"
         if not p.exists():
             return None
-        return Deployment.model_validate_json(p.read_bytes())
+        if p.is_symlink():
+            raise ValueError("Unsafe latent current pointer")
+        deployment = Deployment.model_validate_json(p.read_bytes())
+        immutable = self.root / "deployments" / (deployment.deployment_revision + ".json")
+        if immutable.is_symlink() or Deployment.model_validate_json(immutable.read_bytes()) != deployment:
+            raise ValueError("Current deployment immutable copy mismatch")
+        return deployment
 
     def load(self, deployment, repository_id, library_identity):
         if deployment.workspace_repository_id != repository_id or deployment.library_identity_sha256 != library_identity:
             raise ValueError("Latent deployment ownership mismatch")
         folder = self.root / "generations" / deployment.interest_model_revision
+        if folder.is_symlink() or any((folder / name).is_symlink() for name in ("generation.json", "model.json", "embeddings.npy")):
+            raise ValueError("Unsafe latent generation")
         raw = (folder / "generation.json").read_bytes()
         if sha256(raw).hexdigest() != deployment.generation_sha256:
             raise ValueError("Generation checksum mismatch")
@@ -199,9 +207,15 @@ class LifecycleStore:
         if snapshot.library_identity_sha256 != library_identity:
             raise ValueError("Verified library snapshot mismatch")
         records = records_for(snapshot)
+        if len(records) > 20000:
+            raise ValueError("Latent input budget exceeded")
         hashes = {r["key"]: digest(r) for r in records}
         encoder = accepted_encoder()
-        validate_encoder(cache, encoder)
+        try:
+            validate_encoder(cache, encoder)
+        except (OSError, ValueError):
+            from .recall_integration import LatentRecallUnavailable
+            raise LatentRecallUnavailable("LATENT_RECALL_ENCODER_UNAVAILABLE") from None
         fingerprint = digest(encoder.model_dump())
         runtime = f"sklearn:{version('scikit-learn')};numpy:{version('numpy')};{FORMATION_POLICY}"
         expected, prior = self.token(), self.current()
