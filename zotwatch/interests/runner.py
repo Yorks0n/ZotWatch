@@ -24,9 +24,15 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
 
     run_id = uuid4().hex
     evidence, generation = None, None
+    integrated = getattr(args, "candidate_policy", "confirmed-topic-candidates-v1") == "center-recall-v1"
+    result_type, evidence_type = TopicRunResult, Evidence
+    if integrated:
+        from .integration_results import IntegrationRunResult, IntegrationEvidence
+        from .recall_integration import LatentRecallRuntime, LatentRecallUnavailable, encoder_cache, attach_recall
+        result_type, evidence_type = IntegrationRunResult, IntegrationEvidence
 
     def finish(status, reason, code=0, recommendations=None):
-        result = TopicRunResult(run_id=run_id, command=args.command, status=status,
+        result = result_type(run_id=run_id, command=args.command, status=status,
                                 reason=reason, exit_code=code, evidence=evidence,
                                 state_generation_id=generation, recommendations=recommendations or [])
         target = paths.state / "runs" / f"topic-{run_id}.json"
@@ -41,7 +47,7 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
             raise InterestError("INTEREST_PUBLICATION_UNSUPPORTED")
         value = snapshot_loader(paths.workspace)
         if value is not None:
-            evidence = Evidence(feedback_commit_sha=value.feedback_commit_sha,
+            evidence = evidence_type(feedback_commit_sha=value.feedback_commit_sha,
                                 profile_blob_sha=value.profile_blob_sha,
                                 semantic_input_sha256=semantic_input_hash(value.profile))
         if args.command == "watch":
@@ -49,6 +55,24 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
             state = readiness(value, repository_id, effective.settings.zotero.api.user_id)
             if state != "ready":
                 return finish(state, "INTEREST_" + state.upper())
+            if integrated:
+                try:
+                    model_path = getattr(args, "latent_recall_model", None) or paths.state / "latent/recall/center-recall-v1/model.json"
+                    cache_path = getattr(args, "latent_encoder_cache", None) or encoder_cache()
+                    if getattr(args, "latent_staging", False):
+                        from .staging_runtime import validate_model
+                        validate_model(model_path)
+                    recall_runtime = LatentRecallRuntime(
+                        model_path, cache_path)
+                except LatentRecallUnavailable as exc:
+                    return finish("not_ready", exc.reason)
+                evidence = evidence_type.model_validate({**evidence.model_dump(), "latent_recall": recall_runtime.metadata()})
+                if getattr(args, "latent_staging", False):
+                    from .staging_runtime import validate_runtime
+                    try:
+                        validate_runtime(model_path, cache_path)
+                    except LatentRecallUnavailable as exc:
+                        return finish("not_ready", exc.reason)
         report = preflight(effective)
         if not report.ready:
             return finish("failed", report.error_code, 3)
@@ -78,7 +102,14 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                     raise InterestError("CANDIDATE_UNAVAILABLE")
                 if outcome.status == "degraded":
                     return finish("degraded", "CANDIDATE_PARTIAL", 5)
-                candidates = engine.DedupeEngine(storage).filter(outcome.candidates)
+                collected = outcome.candidates
+                if integrated:
+                    try:
+                        collected, recall_decisions = recall_runtime.recall(collected)
+                    except LatentRecallUnavailable as exc:
+                        return finish("not_ready", exc.reason)
+                    evidence = evidence_type.model_validate({**evidence.model_dump(), "recall_decisions": recall_decisions})
+                candidates = engine.DedupeEngine(storage).filter(collected)
                 # Existing seven-day and preprint admission rules remain, without metadata scoring.
                 candidates = engine._filter_recent(candidates, days=7)
                 ranked = ranker(value.profile, candidates, vectorizer)
@@ -86,6 +117,8 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                 ordered = [by_key[item["work_key"]] for item in ranked]
                 allowed = {c.doi or f"{c.source}:{c.identifier}" for c in engine._limit_preprints(ordered, max_ratio=effective.max_preprint_ratio)}
                 ranked = [r for r in ranked if r["work_key"] in allowed][:effective.top_n]
+                if integrated:
+                    ranked = attach_recall(ranked, recall_decisions, value.profile_blob_sha)
             return finish("succeeded", "INTEREST_READY", recommendations=ranked)
     except InterestError as exc:
         return finish("failed", exc.code, 4)

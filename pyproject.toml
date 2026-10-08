@@ -24,6 +24,9 @@ dependencies = [
   "python-dotenv>=1.0",
 ]
 
+[project.optional-dependencies]
+latent = ["hdbscan==0.8.40", "scikit-learn==1.6.1"]
+
 [project.urls]
 Repository = "https://github.com/Yorks0n/ZotWatch"
 

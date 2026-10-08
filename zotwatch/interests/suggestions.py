@@ -125,8 +125,8 @@ def write_projection(state: Path, run_id: str, projection: Projection) -> None:
 
 
 def export_summary(state: Path, machine: Path, destination: Path, **identity) -> Summary:
-    from .results import parse_result
-    result = parse_result(machine.read_bytes())
+    from .workflow_results import parse_workflow_result
+    result = parse_workflow_result(machine.read_bytes())
     if result.status != "succeeded":
         raise InterestError("SUGGESTION_RUN_UNAVAILABLE")
     recorded = state / "runs" / f"topic-{result.run_id}.json"

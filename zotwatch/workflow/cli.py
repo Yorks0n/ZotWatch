@@ -124,25 +124,29 @@ def main(argv: list[str] | None = None) -> int:
                 engine_sha=args.engine_sha, workspace_repository_id=args.repository_id,
                 caller_run_id=args.caller_run_id, caller_run_attempt=args.caller_run_attempt)
         elif args.command == "seal-result":
-            topic = Path(args.private) / "final" / "topic-result-v2.json"
-            if not topic.exists():
-                topic = Path(args.private) / "profile" / "topic-result-v2.json"
-            if topic.exists():
-                from zotwatch.interests.results import parse_result
-                value = parse_result(topic.read_bytes())
+            topics = [Path(args.private) / folder / f"topic-result-v{version}.json"
+                      for folder in ("final", "profile") for version in (2, 3)]
+            present = [path for path in topics if path.exists()]
+            if present:
+                from zotwatch.interests.workflow_results import parse_workflow_result, envelope_evidence
+                value = parse_workflow_result(present[0].read_bytes())
+                for path in present:
+                    companion = parse_workflow_result(path.read_bytes())
+                    if path.is_symlink() or companion.schema_version != value.schema_version or path.name != f"topic-result-v{value.schema_version}.json":
+                        raise ValueError("INTEREST_RESULT_INVALID")
                 if value.run_id != args.run_id or value.status != args.status or args.publish_requested != "false":
                     raise ValueError("INTEREST_RESULT_INVALID")
                 from .identity import FULL_SHA
                 if not FULL_SHA.fullmatch(args.engine_sha):
                     raise ValueError("INTEREST_ENGINE_INVALID")
                 envelope = {
-                    "schema_name": "zotwatch-topic-workflow-envelope", "schema_version": 2,
+                    "schema_name": "zotwatch-topic-workflow-envelope" if value.schema_version == 2 else "zotwatch-latent-topic-workflow-envelope", "schema_version": value.schema_version,
                     "engine_sha": args.engine_sha, "workspace_repository_id": args.repository_id,
                     "caller_run_id": args.caller_run_id, "run_id": value.run_id,
                     "result_status": value.status, "publish_requested": False,
-                    "evidence": value.evidence.model_dump() if value.evidence else None,
+                    "evidence": envelope_evidence(value),
                 }
-                target = Path(args.private) / "topic-workflow-envelope-v2.json"
+                target = Path(args.private) / f"topic-workflow-envelope-v{value.schema_version}.json"
                 with target.open("x", encoding="utf-8") as stream:
                     stream.write(json.dumps(envelope) + "\n")
                 return 0
@@ -261,8 +265,8 @@ def _restore(args) -> None:
 def _result(args) -> None:
     from .results import validate_and_materialize_result
 
-    if json.loads(Path(args.machine_result).read_bytes()).get("schema_name") == "zotwatch-topic-run-result":
-        from zotwatch.interests.results import materialize
+    if json.loads(Path(args.machine_result).read_bytes()).get("schema_name") in {"zotwatch-topic-run-result", "zotwatch-latent-topic-run-result"}:
+        from zotwatch.interests.workflow_results import materialize
         value = materialize(Path(args.machine_result), args.process_exit_code, Path(args.state), Path(args.private))
         summary = {"run_id": value.run_id, "status": value.status, "exit_code": value.exit_code,
                    "state_generation_id": value.state_generation_id, "output_generation_id": None}

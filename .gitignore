@@ -11,6 +11,14 @@ __pycache__/
 /data/*.index
 /data/profile.json
 /data/computational/
+/data/latent/
+# Private evaluation reports include library titles and item keys.
+/docs/P5B3_CLUSTERING_BENCHMARK.md
+/docs/P5B3_MEMBERSHIP_QUALIFICATION.md
+/docs/P5B3_EMBEDDING_MODEL_BENCHMARK.md
+/docs/P5B3_QUALITY_ACCEPTANCE.md
+/docs/P5B4_CENTER_SUPPORTED_RECALL.md
+/docs/P5B4_QUALITY_ACCEPTANCE.md
 /data/.zotwatch-state.lock
 /data/cache/
 /data/cache/*

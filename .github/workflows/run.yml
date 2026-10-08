@@ -18,6 +18,9 @@ on:
       expected-config-sha:
         type: string
         default: ""
+      candidate-policy:
+        type: string
+        default: confirmed-topic-candidates-v1
     secrets:
       ZOTERO_USER_ID:
         required: false
@@ -86,10 +89,11 @@ jobs:
           CALLER_REF: ${{ github.ref }}
           INPUT_MODE: ${{ inputs.mode }}
           INPUT_FULL: ${{ inputs['full-rebuild'] }}
+          INPUT_CANDIDATE_POLICY: ${{ inputs['candidate-policy'] }}
         shell: bash
         run: |
           set -euo pipefail
-          python -c 'import os,sys; ok=os.environ["CALLER_EVENT"] in {"schedule","workflow_dispatch"} and os.environ["CALLER_PRIVATE"] == "true" and os.environ["CALLER_REF"].startswith("refs/heads/") and os.environ["INPUT_MODE"] in {"run","profile","validate"} and not (os.environ["INPUT_MODE"] == "validate" and os.environ["INPUT_FULL"] == "true"); sys.exit(0 if ok else "untrusted or invalid reusable-workflow invocation")'
+          python -c 'import os,sys; ok=os.environ["CALLER_EVENT"] in {"schedule","workflow_dispatch"} and os.environ["CALLER_PRIVATE"] == "true" and os.environ["CALLER_REF"].startswith("refs/heads/") and os.environ["INPUT_MODE"] in {"run","profile","validate"} and os.environ["INPUT_CANDIDATE_POLICY"] in {"confirmed-topic-candidates-v1","center-recall-v1"} and not (os.environ["INPUT_MODE"] == "validate" and os.environ["INPUT_FULL"] == "true"); sys.exit(0 if ok else "untrusted or invalid reusable-workflow invocation")'
 
       - name: Checkout personal workspace
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -229,6 +233,16 @@ jobs:
           --summary-output "$RUNNER_TEMP/pre-profile-summary.json"
           --github-output
 
+      - name: Fetch private frozen staging runtime
+        if: inputs.mode == 'run' && inputs.candidate-policy == 'center-recall-v1' && steps.config.outputs.ranking-policy == 'topic-v1'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: >-
+          python -m zotwatch.interests.staging_runtime fetch
+          --destination "$RUNNER_TEMP/zotwatch-latent-runtime"
+          >"$RUNNER_TEMP/zotwatch-latent-runtime-metadata.json"
+
       - name: Run engine
         if: inputs.mode != 'validate' && (steps.config.outputs.ranking-policy == 'topic-v1' || !inputs.full-rebuild || inputs.mode == 'profile' || steps.pre-profile-result.outputs.status == 'succeeded')
         id: invoke
@@ -249,6 +263,7 @@ jobs:
           ZOTWATCH_CUSTOM_4_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_4_CREDENTIAL }}
           INPUT_MODE: ${{ inputs.mode }}
           INPUT_FULL: ${{ inputs['full-rebuild'] }}
+          INPUT_CANDIDATE_POLICY: ${{ inputs['candidate-policy'] }}
         shell: bash
         run: |
           set +e
@@ -258,6 +273,11 @@ jobs:
           if [[ "$INPUT_MODE" == "profile" ]]; then
             command=profile
             if [[ "$INPUT_FULL" == "true" ]]; then extra+=(--full); fi
+          fi
+          if [[ "$command" == "watch" && "$INPUT_CANDIDATE_POLICY" == "center-recall-v1" ]]; then
+            extra+=(--candidate-policy center-recall-v1 --latent-staging --latent-recall-model "$RUNNER_TEMP/zotwatch-latent-runtime/model.json" --latent-encoder-cache "$RUNNER_TEMP/zotwatch-latent-runtime/hub")
+            export HF_HUB_CACHE="$RUNNER_TEMP/zotwatch-latent-runtime/hub"
+            export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
           fi
           zotwatch "$command" --workspace "$GITHUB_WORKSPACE/workspace" --state-dir "$RUNNER_TEMP/zotwatch-state" --reports-dir "$RUNNER_TEMP/zotwatch-reports" --machine-result "${extra[@]}" >"$RUNNER_TEMP/machine-result.json" 2>"$RUNNER_TEMP/engine.stderr"
           code=$?
@@ -320,7 +340,7 @@ jobs:
         id: upload-private
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: ${{ steps.config.outputs.ranking-policy == 'topic-v1' && 'zotwatch-private-topic-run-v2' || 'zotwatch-private-run-v1' }}
+          name: ${{ inputs.mode == 'run' && inputs.candidate-policy == 'center-recall-v1' && steps.config.outputs.ranking-policy == 'topic-v1' && 'zotwatch-private-latent-topic-run-v3' || steps.config.outputs.ranking-policy == 'topic-v1' && 'zotwatch-private-topic-run-v2' || 'zotwatch-private-run-v1' }}
           path: ${{ runner.temp }}/zotwatch-operational
           if-no-files-found: error
           retention-days: 30
