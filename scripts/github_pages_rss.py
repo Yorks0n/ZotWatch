@@ -100,7 +100,7 @@ def load_final(source, run_id):
             raise ValueError("Unrecognized final result")
         auto = final.get("schema_name") == "zotwatch-latent-auto-run-result"
         envelope = read_json("latent-auto-workflow-envelope-v1.json" if auto else f"topic-workflow-envelope-v{version}.json")
-        if auto:
+        if auto and final.get("status") == "succeeded" and final.get("command") == "watch":
             if (final.get("ranking_policy") != "latent-auto-v1" or final.get("candidate_policy") != "center-recall-v1"
                     or envelope.get("schema_name") != "zotwatch-latent-auto-workflow-envelope"
                     or envelope.get("schema_version") != 1 or envelope.get("evidence") != final.get("evidence")
@@ -166,10 +166,42 @@ def plain(value):
 def public_abstract(guid):
     if guid.startswith("urn:doi:"):
         doi = guid[8:]
-        metadata = json.loads(request("https://api.crossref.org/works/" + quote(doi, safe="")))["message"]
-        if metadata["DOI"].lower() != doi:
-            raise ValueError("Public metadata identity mismatch")
-        return plain(metadata.get("abstract", ""))
+        # Public exact-DOI fallback matches the private enrichment priority.
+        try:
+            metadata = json.loads(request("https://api.crossref.org/works/" + quote(doi, safe="")))["message"]
+            if metadata["DOI"].lower() != doi:
+                raise ValueError("Public metadata identity mismatch")
+            abstract = plain(metadata.get("abstract", ""))
+            if abstract:
+                return abstract
+        except (OSError, ValueError, KeyError):
+            pass
+        try:
+            url = "https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=" + quote('DOI:"'+doi+'"') + "&format=json&resultType=core&pageSize=10"
+            metadata = json.loads(request(url))
+            for row in metadata.get("resultList", {}).get("result", []):
+                if (row.get("doi") or "").lower() == doi:
+                    abstract = plain(row.get("abstractText", ""))
+                    if abstract:
+                        return abstract
+        except (OSError, ValueError, KeyError):
+            pass
+        try:
+            url = "https://api.openalex.org/works/https://doi.org/" + quote(doi, safe="")
+            if os.getenv("OPENALEX_API_KEY"):
+                url += "?api_key=" + quote(os.environ["OPENALEX_API_KEY"], safe="")
+            metadata = json.loads(request(url))
+            if (metadata.get("doi") or "").lower().removeprefix("https://doi.org/") != doi:
+                raise ValueError("Public metadata identity mismatch")
+            words = {}
+            for word, positions in (metadata.get("abstract_inverted_index") or {}).items():
+                for position in positions:
+                    if type(position) is not int or not 0 <= position < 50000 or position in words:
+                        raise ValueError("Invalid public abstract index")
+                    words[position] = word
+            return plain(" ".join(words[i] for i in sorted(words)))
+        except (OSError, ValueError, KeyError, TypeError):
+            return ""
     identifier = guid[10:]
     root = ET.fromstring(request("https://export.arxiv.org/api/query?id_list=" + quote(identifier, safe="")))
     ns = {"a": "http://www.w3.org/2005/Atom"}

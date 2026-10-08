@@ -18,7 +18,7 @@ def rank(candidates, decisions):
         rows.append(dict(work_key=key, title=c.title, url=c.url,
             primary_center_id=match["interest_id"], center_cosine=match["center_cosine"],
             score=match["center_cosine"], source=c.source, identifier=c.identifier,
-            doi=c.doi, venue=c.venue, published=c.published.isoformat()))
+            doi=c.doi, venue=c.venue, published=c.extra.get("publication_date") or c.published.isoformat()))
     return sorted(rows, key=lambda r: (-r["center_cosine"], r["work_key"]))
 
 

@@ -18,6 +18,7 @@ from .http_utils import request_with_retry
 from .models import CandidateWork
 from .settings import Settings
 from .utils import ensure_isoformat, iso_to_datetime, utc_now
+from zotwatch.publication_dates import crossref_date, date_datetime
 
 logger = logging.getLogger(__name__)
 ARXIV_REQUEST_DELAY_SECONDS = 3.1
@@ -399,10 +400,11 @@ class CandidateFetcher:
                     authors=[a for a in authors if a],
                     doi=doi,
                     url=item.get("URL"),
-                    published=_parse_date(item.get("created", {}).get("date-time")),
+                    published=date_datetime(item),
                     venue=(item.get("container-title") or [None])[0],
                     metrics={"is-referenced-by": float(item.get("is-referenced-by-count", 0))},
-                    extra={"type": item.get("type")},
+                    extra={"type": item.get("type"), **crossref_date(item),
+                           "crossref_metadata": _crossref_metadata(item)},
                 )
             )
         return results
@@ -451,12 +453,13 @@ class CandidateFetcher:
                         authors=[a for a in authors if a],
                         doi=doi,
                         url=item.get("URL"),
-                        published=_parse_date(item.get("created", {}).get("date-time")),
+                        published=date_datetime(item),
                         venue=venue,
                         metrics={"is-referenced-by": float(item.get("is-referenced-by-count", 0))},
                         extra={
                             "source": "top_venue",
-                            "type": item.get("type"),
+                            "type": item.get("type"), **crossref_date(item),
+                            "crossref_metadata": _crossref_metadata(item),
                             **({"diagnostic_publication_dates": {
                                 field: item[field] for field in ("published", "published-online", "published-print", "issued")
                                 if field in item}} if os.getenv("ZOTWATCH_PRIVATE_FILTER_DIAGNOSTIC") == "1" else {}),
@@ -635,3 +638,7 @@ def _is_number(value) -> bool:
 
 
 __all__ = ["CandidateFetcher"]
+
+
+def _crossref_metadata(item):
+    return {key:item[key] for key in ("DOI","abstract","created","published-online","published","issued","published-print") if key in item}

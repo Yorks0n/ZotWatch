@@ -8,6 +8,8 @@ from .center_recall_contract import digest
 from .lifecycle import LifecycleStore, RunDeploymentEvidence, load_runtime
 from .recall_integration import LatentRecallUnavailable, encoder_cache, work_key
 from .runner import _storage
+from zotwatch.metadata import Cache, enrich
+from zotwatch.publication_dates import admission
 
 
 def run(args, paths, effective):
@@ -75,7 +77,13 @@ def run(args, paths, effective):
                     return finish("degraded" if outcome.status == "degraded" else "failed",
                         "CANDIDATE_PARTIAL" if outcome.status == "degraded" else "CANDIDATE_UNAVAILABLE",
                         5 if outcome.status == "degraded" else 4)
+                try:
+                    metadata = enrich(outcome.candidates, Cache(paths.state, repository_id))
+                except (OSError, ValueError) as exc:
+                    logging.getLogger(__name__).warning("Metadata cache unavailable: %s", type(exc).__name__)
+                    metadata = {"status":"unavailable"}
                 if diagnostic:
+                    diagnostic.data["metadata_enrichment"] = metadata
                     inputs = diagnostic.collected(outcome.candidates)
                 recalled, decisions = runtime.recall(outcome.candidates)
                 if diagnostic:
@@ -84,10 +92,13 @@ def run(args, paths, effective):
                 deduped = engine.DedupeEngine(storage).filter(recalled)
                 if diagnostic:
                     diagnostic.stage("library_dedupe", recalled, deduped)
-                def dates(cutoff, before, after):
-                    diagnostic.dates(cutoff)
-                    diagnostic.stage("seven_day_admission", before, after)
-                recent = engine._filter_recent(deduped, days=7, **({"diagnostic": dates} if diagnostic else {}))
+                recent, window = admission(deduped)
+                if diagnostic:
+                    diagnostic.data["publication_window"] = window
+                    for candidate in deduped:
+                        if work_key(candidate) in window["rejected"]:
+                            diagnostic.reject("seven_day_admission", candidate, window["rejected"][work_key(candidate)])
+                    diagnostic.stage("seven_day_admission", deduped, recent)
                 rows = rank(recent, decisions)
                 diversified = select(rows, limit=None)
                 by_key = {work_key(c): c for c in recent}

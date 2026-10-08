@@ -62,6 +62,7 @@ def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, mon
     candidates=[candidate('plant',doi='10.1234/plant',abstract='real semantic text',published=datetime.now(timezone.utc)),
         candidate('old',abstract='text',published=datetime(2020,1,1,tzinfo=timezone.utc))]
     candidates[0].venue="Plant Physiology"
+    candidates[0].extra["crossref_metadata"] = {"DOI":"10.1234/plant", "abstract":"real semantic text", "published-online":{"date-parts":[[int(x) for x in datetime.now(timezone.utc).date().isoformat().split("-")]]}}
     install_collection(monkeypatch,candidates)
     monkeypatch.setattr(recall_integration,'encode_candidates',fake_encode)
     args=integrated_args(latent_lifecycle='per-user-v1',latent_encoder_cache='unused');args.full=False
@@ -111,3 +112,14 @@ def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, mon
     feed,n=rss.merge_feed(loaded,None,'https://example.com/feed.xml',datetime.now(timezone.utc),resolve=lambda _: 'Public abstract')
     assert n==1 and len(rss.read_feed(feed))==1
     assert revision.encode() not in feed
+
+    # A not_ready source run may have a successful Actions conclusion; RSS must skip it.
+    unavailable=result.model_dump()
+    unavailable.update(status='not_ready',reason='LATENT_RECALL_ENCODER_UNAVAILABLE',evidence=None,recommendations=[])
+    envelope.update(result_status='not_ready',evidence=None)
+    stream=io.BytesIO()
+    with zipfile.ZipFile(stream,'w') as z:
+        z.writestr('final/latent-auto-result-v1.json',json.dumps(unavailable))
+        z.writestr('latent-auto-workflow-envelope-v1.json',json.dumps(envelope))
+    archive=stream.getvalue()
+    assert rss.load_final('owner/private',99) is None

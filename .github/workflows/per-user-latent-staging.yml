@@ -29,6 +29,8 @@ on:
         required: false
       ZOTERO_API_KEY:
         required: false
+      OPENALEX_API_KEY:
+        required: false
       VOYAGE_API_KEY:
         required: false
       DASHSCOPE_API_KEY:
@@ -225,6 +227,14 @@ jobs:
           python -m zotwatch.interests.lifecycle_transport restore
           --state "$RUNNER_TEMP/zotwatch-state"
 
+      - name: Restore independent durable DOI metadata cache
+        if: inputs.mode != 'validate'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: python -m zotwatch.metadata_transport restore --state "$RUNNER_TEMP/zotwatch-state"
+
       - name: Deliver exact generic MiniLM encoder
         if: inputs.mode != 'validate'
         shell: bash
@@ -239,6 +249,7 @@ jobs:
           ZOTWATCH_PRIVATE_FILTER_DIAGNOSTIC: "1"
           GITHUB_TOKEN: ${{ github.token }}
           INPUT_RANKING_POLICY: ${{ steps.config.outputs.ranking-policy }}
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
           ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
           ZOTERO_API_KEY: ${{ secrets.ZOTERO_API_KEY }}
           VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
@@ -285,6 +296,18 @@ jobs:
           set -euo pipefail
           if [[ -f "$RUNNER_TEMP/zotwatch-state/latent-state-v1/current.json" ]]; then
             python -m zotwatch.interests.lifecycle_transport publish --state "$RUNNER_TEMP/zotwatch-state"
+          fi
+
+      - name: Persist independent DOI metadata cache with remote CAS
+        if: inputs.mode != 'validate' && steps.invoke.outcome == 'success'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f "$RUNNER_TEMP/zotwatch-state/metadata-cache-v1.json" && -f "$RUNNER_TEMP/zotwatch-state/metadata-remote-v1.json" ]]; then
+            python -m zotwatch.metadata_transport publish --state "$RUNNER_TEMP/zotwatch-state"
           fi
 
       - name: Validate finalized engine result
