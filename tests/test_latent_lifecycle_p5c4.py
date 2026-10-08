@@ -269,3 +269,50 @@ def test_nonpaper_rows_never_enter_eligibility_or_centroids_even_with_abstract(s
     g,_,_=store[0].load(d,42,IDENTITY)
     assert encoded==12 and len(g.input_records)==12
     assert not set(['attachment','note','annotation']) & set(g.embedding_keys)
+
+
+def test_per_user_workflow_is_separate_and_closed_inputs_outputs():
+    from pathlib import Path
+    import yaml
+    root=Path(__file__).parents[1]
+    workflow=yaml.safe_load((root/'.github/workflows/per-user-latent-staging.yml').read_text())
+    call=workflow[True]['workflow_call']
+    assert call['inputs']['staging-audit']=={'type':'boolean','default':False}
+    assert all(set(v)=={'value'} for v in call['outputs'].values())
+    steps=workflow['jobs']['compute']['steps']
+    assert not any('frozen' in s['name'] for s in steps)
+    assert any('lifecycle_transport restore' in s.get('run','') for s in steps)
+    assert any('lifecycle_transport publish' in s.get('run','') for s in steps)
+    assert workflow['jobs']['compute']['permissions']=={'contents':'write','actions':'read'}
+    original=yaml.safe_load((root/'.github/workflows/run.yml').read_text())
+    assert original[True]['workflow_call']['inputs']['candidate-policy']['default']=='confirmed-topic-candidates-v1'
+    assert original['jobs']['compute']['permissions']['contents']=='read'
+
+
+def test_failed_rebuild_without_formal_centers_keeps_last_good_model(store):
+    first,_,_=ensure(store)
+    store[1].connect().execute('DELETE FROM items');store[1].connect().commit();seed(store[1],n=5,revision=11)
+    token=store[0].token()
+    with pytest.raises(ValueError,match='no formal centers'):ensure(store,manual=True)
+    assert store[0].token()==token and store[0].current()==first
+    assert store[0].load(first,42,IDENTITY)[0].centers
+
+
+def test_all_muted_preserves_readiness_gate_before_lifecycle(pipeline,monkeypatch):
+    from .test_interests_p5b1 import profile,commit_profile
+    paths,effective,_,_=pipeline
+    value=profile();value['library_scope']['id']='123456';value['interests'][0]['status']='muted'
+    commit_profile(paths.workspace,value)
+    monkeypatch.setattr(lc,'load_runtime',lambda *a:pytest.fail('muted gate must precede model'))
+    r=runner.run(integrated_args(latent_lifecycle='per-user-v1'),paths,effective)
+    assert (r.status,r.reason)==('paused','INTEREST_PAUSED') and r.recommendations==[]
+
+
+def test_library_encoding_budget_is_independent_of_candidate_pool_budget(store):
+    seed(store[1],n=2001)
+    batches=[]
+    def encode(model,cache,records):
+        batches.append(len(records));return fake_encode(model,cache,records)
+    d,_,encoded=ensure(store,encode=encode)
+    assert encoded==2001 and batches==[2000,1]
+    assert len(store[0].load(d,42,IDENTITY)[0].embedding_keys)==2001

@@ -237,10 +237,15 @@ class LifecycleStore:
         if changed:
             shell = CenterRecallModel(interest_model_revision=uuid4().hex, source_snapshot_sha256=digest(records),
                 encoder=encoder, embedding_text_fingerprint=fingerprint, threshold=.55, centers=[])
-            x, meta = encode(shell, cache, [dict(id=r["key"], title=r["title"], abstract=r["abstract"]) for r in changed])
-            if np.asarray(x).shape != (len(changed), 384) or meta["embedding_text_fingerprint"] != fingerprint:
-                raise ValueError("Bootstrap encoding fingerprint/dimension mismatch")
-            cached.update((r["key"], row) for r, row in zip(changed, x))
+            # The accepted runtime encoder has a 2,000-candidate call budget;
+            # library formation retains its independent 20,000-record budget.
+            from .center_recall import MAX_CANDIDATES
+            for start in range(0, len(changed), MAX_CANDIDATES):
+                batch = changed[start:start + MAX_CANDIDATES]
+                x, meta = encode(shell, cache, [dict(id=r["key"], title=r["title"], abstract=r["abstract"]) for r in batch])
+                if np.asarray(x).shape != (len(batch), 384) or meta["embedding_text_fingerprint"] != fingerprint:
+                    raise ValueError("Bootstrap encoding fingerprint/dimension mismatch")
+                cached.update((r["key"], row) for r, row in zip(batch, x))
         vectors = np.asarray([cached[r["key"]] for r in eligible], dtype=np.float64).reshape(-1, 384)
         if not np.isfinite(vectors).all() or not np.allclose(np.linalg.norm(vectors, axis=1), 1., atol=1e-6):
             raise ValueError("Bootstrap encoder must return normalized vectors")
