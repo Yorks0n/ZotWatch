@@ -174,14 +174,14 @@ jobs:
           --full-rebuild '${{ inputs['full-rebuild'] }}'
           --github-output
 
-      - name: Require accepted topic configuration for per-user lifecycle
+      - name: Require latent-auto configuration for per-user lifecycle
         if: inputs.mode != 'validate'
         env:
           RANKING_POLICY: ${{ steps.config.outputs.ranking-policy }}
           CANDIDATE_POLICY: ${{ inputs['candidate-policy'] }}
         shell: bash
         run: |
-          test "$RANKING_POLICY" = topic-v1
+          test "$RANKING_POLICY" = latent-auto-v1
           test "$CANDIDATE_POLICY" = center-recall-v1
 
       - name: Validate config only
@@ -207,47 +207,8 @@ jobs:
           --staging "$RUNNER_TEMP/zotwatch-restore"
           --context-output "$RUNNER_TEMP/zotwatch-workflow-context.json"
 
-      - name: Run full profile before watch
-        if: inputs.mode == 'run' && inputs.full-rebuild && steps.config.outputs.ranking-policy != 'topic-v1'
-        id: pre-profile
-        env:
-          ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
-          ZOTERO_API_KEY: ${{ secrets.ZOTERO_API_KEY }}
-          VOYAGE_API_KEY: ${{ secrets.VOYAGE_API_KEY }}
-          DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          ZOTWATCH_CUSTOM_1_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_1_CREDENTIAL }}
-          ZOTWATCH_CUSTOM_2_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_2_CREDENTIAL }}
-          ZOTWATCH_CUSTOM_3_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_3_CREDENTIAL }}
-          ZOTWATCH_CUSTOM_4_CREDENTIAL: ${{ secrets.ZOTWATCH_CUSTOM_4_CREDENTIAL }}
-        shell: bash
-        run: |
-          set +e
-          zotwatch profile --workspace "$GITHUB_WORKSPACE/workspace" --state-dir "$RUNNER_TEMP/zotwatch-state" --reports-dir "$RUNNER_TEMP/zotwatch-reports" --full --machine-result >"$RUNNER_TEMP/pre-profile-result.json" 2>"$RUNNER_TEMP/pre-profile.stderr"
-          code=$?
-          echo "exit-code=$code" >>"$GITHUB_OUTPUT"
-          exit 0
-
-      - name: Validate full-profile result
-        if: inputs.mode == 'run' && inputs.full-rebuild && steps.config.outputs.ranking-policy != 'topic-v1'
-        id: pre-profile-result
-        shell: bash
-        run: >-
-          python -m zotwatch.workflow result
-          --machine-result "$RUNNER_TEMP/pre-profile-result.json"
-          --process-exit-code '${{ steps.pre-profile.outputs.exit-code }}'
-          --state "$RUNNER_TEMP/zotwatch-state"
-          --reports "$RUNNER_TEMP/zotwatch-reports"
-          --publishable "$RUNNER_TEMP/zotwatch-empty-profile"
-          --private "$RUNNER_TEMP/zotwatch-operational/profile"
-          --summary-output "$RUNNER_TEMP/pre-profile-summary.json"
-          --github-output
-
       - name: Restore durable private per-user latent state
-        if: inputs.mode != 'validate' && steps.config.outputs.ranking-policy == 'topic-v1'
+        if: inputs.mode != 'validate'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         shell: bash
@@ -256,16 +217,17 @@ jobs:
           --state "$RUNNER_TEMP/zotwatch-state"
 
       - name: Deliver exact generic MiniLM encoder
-        if: inputs.mode != 'validate' && steps.config.outputs.ranking-policy == 'topic-v1'
+        if: inputs.mode != 'validate'
         shell: bash
         run: >-
           python -m zotwatch.interests.lifecycle_transport encoder
           --cache "$RUNNER_TEMP/zotwatch-encoder/hub"
 
       - name: Run engine
-        if: inputs.mode != 'validate' && (steps.config.outputs.ranking-policy == 'topic-v1' || !inputs.full-rebuild || inputs.mode == 'profile' || steps.pre-profile-result.outputs.status == 'succeeded')
+        if: inputs.mode != 'validate'
         id: invoke
         env:
+          ZOTWATCH_PRIVATE_FILTER_DIAGNOSTIC: "1"
           GITHUB_TOKEN: ${{ github.token }}
           INPUT_RANKING_POLICY: ${{ steps.config.outputs.ranking-policy }}
           ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
@@ -283,7 +245,6 @@ jobs:
           INPUT_MODE: ${{ inputs.mode }}
           INPUT_FULL: ${{ inputs['full-rebuild'] }}
           INPUT_CANDIDATE_POLICY: ${{ inputs['candidate-policy'] }}
-          ZOTWATCH_PRIVATE_FILTER_DIAGNOSTIC: '1'
         shell: bash
         run: |
           set +e
@@ -291,7 +252,7 @@ jobs:
           export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
           command=watch
           extra=(--latent-lifecycle per-user-v1 --latent-encoder-cache "$RUNNER_TEMP/zotwatch-encoder/hub")
-          if [[ "$INPUT_RANKING_POLICY" == "topic-v1" && "$INPUT_FULL" == "true" ]]; then extra+=(--full); fi
+          if [[ "$INPUT_FULL" == "true" ]]; then extra+=(--full); fi
           if [[ "$INPUT_MODE" == "profile" ]]; then
             command=profile
             if [[ "$INPUT_FULL" == "true" ]]; then extra+=(--full); fi
@@ -317,25 +278,6 @@ jobs:
             python -m zotwatch.interests.lifecycle_transport publish --state "$RUNNER_TEMP/zotwatch-state"
           fi
 
-      - name: Audit isolated real per-user state lifecycle
-        if: inputs.staging-audit && steps.invoke.outcome == 'success'
-        shell: bash
-        run: >-
-          python engine/scripts/audit_per_user_lifecycle.py
-          --source "$RUNNER_TEMP/zotwatch-state"
-          --output "$RUNNER_TEMP/zotwatch-lifecycle-audit"
-          --cache "$RUNNER_TEMP/zotwatch-encoder/hub"
-          --repository-id '${{ github.repository_id }}'
-
-      - name: Upload private lifecycle audit evidence
-        if: inputs.staging-audit && steps.invoke.outcome == 'success'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: zotwatch-private-latent-lifecycle-audit-v1
-          path: ${{ runner.temp }}/zotwatch-lifecycle-audit/evidence.json
-          if-no-files-found: error
-          retention-days: 30
-
       - name: Validate finalized engine result
         if: steps.invoke.outcome == 'success'
         id: result
@@ -350,15 +292,6 @@ jobs:
           --private "$RUNNER_TEMP/zotwatch-operational/final"
           --summary-output "$RUNNER_TEMP/result-summary.json"
           --github-output
-
-      - name: Upload private stage filter diagnostic
-        if: inputs.mode == 'run' && steps.result.outputs.status == 'succeeded'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: zotwatch-private-filter-diagnostic-v1
-          path: ${{ runner.temp }}/zotwatch-state/runs/filter-diagnostic-${{ steps.result.outputs.run-id }}.json
-          if-no-files-found: error
-          retention-days: 7
 
       - name: Select authoritative result
         id: aggregate
@@ -406,39 +339,6 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Upload private recommendation result
-        if: steps.config.outputs.ranking-policy != 'topic-v1' && (steps.result.outputs.status == 'succeeded' || steps.result.outputs.status == 'degraded')
-        id: upload-report
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: zotwatch-recommendations-v1
-          path: ${{ runner.temp }}/zotwatch-publishable
-          if-no-files-found: ignore
-          retention-days: 30
-
-      - name: Export bounded private interest suggestions
-        if: steps.config.outputs.ranking-policy == 'topic-v1' && steps.result.outputs.status == 'succeeded'
-        shell: bash
-        run: >-
-          python -m zotwatch.workflow export-suggestions
-          --state "$RUNNER_TEMP/zotwatch-state"
-          --machine-result "$RUNNER_TEMP/machine-result.json"
-          --destination "$RUNNER_TEMP/zotwatch-interest-suggestions"
-          --engine-sha '${{ steps.identity.outputs.engine-sha }}'
-          --repository-id '${{ github.repository_id }}'
-          --caller-run-id '${{ github.run_id }}'
-          --caller-run-attempt '${{ github.run_attempt }}'
-
-      - name: Upload bounded private interest suggestions
-        if: steps.config.outputs.ranking-policy == 'topic-v1' && steps.result.outputs.status == 'succeeded'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: zotwatch-interest-suggestions-v1
-          path: ${{ runner.temp }}/zotwatch-interest-suggestions/interest-suggestions-v1.json
-          if-no-files-found: error
-          retention-days: 30
-          overwrite: true
-
       - name: Export successful private checkpoint
         if: steps.aggregate.outputs.result-status == 'succeeded' && inputs.mode != 'validate'
         shell: bash
@@ -460,6 +360,15 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           overwrite: true
+
+      - name: Upload private latent-auto filter evidence
+        if: steps.invoke.outcome == 'success'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zotwatch-private-latent-auto-diagnostic-v1
+          path: ${{ runner.temp }}/zotwatch-state/runs/filter-diagnostic-*.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Propagate engine result
         if: inputs.mode != 'validate' && steps.aggregate.outputs.result-status != 'succeeded' && steps.aggregate.outputs.result-status != 'not_ready' && steps.aggregate.outputs.result-status != 'paused'

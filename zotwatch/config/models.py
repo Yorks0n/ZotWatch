@@ -37,9 +37,17 @@ class CandidatesConfigV2(StrictConfigModel):
 
 
 class RankingConfigV2(StrictConfigModel):
-    policy: Literal["legacy-v1", "topic-v1"]
+    policy: Literal["legacy-v1", "topic-v1", "latent-auto-v1"]
     top_n: int = Field(ge=1, le=200)
     max_preprint_ratio: Literal[0.3]
+
+
+# Fixed v1 policy; configurable top_n remains for historical modes only.
+    @model_validator(mode="after")
+    def auto_top_n(self):
+        if self.policy == "latent-auto-v1" and self.top_n != 20:
+            raise ValueError("latent-auto-v1 requires top_n=20")
+        return self
 
 
 class EmbeddingConfigV2(StrictConfigModel):

@@ -1,0 +1,262 @@
+{
+  "$defs": {
+    "AutoEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "interest_model_revision": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Interest Model Revision",
+          "type": "string"
+        },
+        "embedding_text_fingerprint": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Embedding Text Fingerprint",
+          "type": "string"
+        },
+        "recall_policy": {
+          "const": "center-recall-v1",
+          "default": "center-recall-v1",
+          "title": "Recall Policy",
+          "type": "string"
+        },
+        "threshold": {
+          "const": 0.55,
+          "default": 0.55,
+          "title": "Threshold",
+          "type": "number"
+        },
+        "workspace_repository_id": {
+          "exclusiveMinimum": 0,
+          "title": "Workspace Repository Id",
+          "type": "integer"
+        },
+        "library_identity_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Library Identity Sha256",
+          "type": "string"
+        },
+        "encoder_fingerprint": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Encoder Fingerprint",
+          "type": "string"
+        },
+        "formal_center_ids": {
+          "items": {
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Formal Center Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "interest_model_revision",
+        "embedding_text_fingerprint",
+        "workspace_repository_id",
+        "library_identity_sha256",
+        "encoder_fingerprint",
+        "formal_center_ids"
+      ],
+      "title": "AutoEvidence",
+      "type": "object"
+    },
+    "AutoRecommendation": {
+      "additionalProperties": false,
+      "properties": {
+        "work_key": {
+          "minLength": 1,
+          "title": "Work Key",
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Url"
+        },
+        "primary_center_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Primary Center Id",
+          "type": "string"
+        },
+        "center_cosine": {
+          "maximum": 1.0,
+          "minimum": 0.55,
+          "title": "Center Cosine",
+          "type": "number"
+        },
+        "score": {
+          "maximum": 1.0,
+          "minimum": 0.55,
+          "title": "Score",
+          "type": "number"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "identifier": {
+          "title": "Identifier",
+          "type": "string"
+        },
+        "doi": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Doi"
+        },
+        "venue": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Venue"
+        },
+        "published": {
+          "title": "Published",
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_key",
+        "title",
+        "url",
+        "primary_center_id",
+        "center_cosine",
+        "score",
+        "source",
+        "identifier",
+        "doi",
+        "venue",
+        "published"
+      ],
+      "title": "AutoRecommendation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "zotwatch-latent-auto-run-result",
+      "default": "zotwatch-latent-auto-run-result",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "ranking_policy": {
+      "const": "latent-auto-v1",
+      "default": "latent-auto-v1",
+      "title": "Ranking Policy",
+      "type": "string"
+    },
+    "candidate_policy": {
+      "const": "center-recall-v1",
+      "default": "center-recall-v1",
+      "title": "Candidate Policy",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "command": {
+      "enum": [
+        "profile",
+        "watch"
+      ],
+      "title": "Command",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "degraded",
+        "failed",
+        "not_ready"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "exit_code": {
+      "enum": [
+        0,
+        3,
+        4,
+        5
+      ],
+      "title": "Exit Code",
+      "type": "integer"
+    },
+    "reason": {
+      "pattern": "^[A-Z_]+$",
+      "title": "Reason",
+      "type": "string"
+    },
+    "evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/AutoEvidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "state_generation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "State Generation Id"
+    },
+    "recommendations": {
+      "items": {
+        "$ref": "#/$defs/AutoRecommendation"
+      },
+      "maxItems": 20,
+      "title": "Recommendations",
+      "type": "array"
+    }
+  },
+  "required": [
+    "run_id",
+    "command",
+    "status",
+    "exit_code",
+    "reason"
+  ],
+  "title": "AutoRunResult",
+  "type": "object"
+}

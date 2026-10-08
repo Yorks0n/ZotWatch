@@ -306,7 +306,8 @@
         "policy": {
           "enum": [
             "legacy-v1",
-            "topic-v1"
+            "topic-v1",
+            "latent-auto-v1"
           ],
           "title": "Policy",
           "type": "string"
@@ -324,7 +325,25 @@
         "max_preprint_ratio"
       ],
       "title": "RankingConfigV2",
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "policy": {
+                "const": "latent-auto-v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "top_n": {
+                "const": 20
+              }
+            }
+          }
+        }
+      ]
     },
     "ZoteroConfigV2": {
       "additionalProperties": false,

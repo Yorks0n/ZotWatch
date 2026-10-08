@@ -350,7 +350,12 @@ class RunDeploymentEvidence(Closed):
         return self
 
     def validate_result(self, result):
-        metadata = result.evidence.latent_recall if result.evidence and result.schema_version == 3 else None
+        metadata = result.evidence if result.schema_name == "zotwatch-latent-auto-run-result" else (
+            result.evidence.latent_recall if result.evidence and result.schema_version == 3 else None)
+        if result.schema_name == "zotwatch-latent-auto-run-result" and metadata and (
+            not self.deployment or metadata.workspace_repository_id != self.deployment.workspace_repository_id or
+            metadata.library_identity_sha256 != self.deployment.library_identity_sha256):
+            raise ValueError("Exact run scope mismatch")
         if self.run_id != result.run_id:
             raise ValueError("Exact run deployment mismatch")
         if metadata and (not self.deployment or metadata.interest_model_revision != self.deployment.interest_model_revision or

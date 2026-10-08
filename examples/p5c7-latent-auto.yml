@@ -1,0 +1,17 @@
+# Install as .github/workflows/p5c4-lifecycle.yml in the private staging workspace.
+name: ZotWatch per-user staging
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  lifecycle:
+    uses: Yorks0n/ZotWatch/.github/workflows/per-user-latent-staging.yml@ENGINE_SHA
+    with:
+      config-path: zotwatch-latent-auto.yaml
+      mode: run
+      candidate-policy: center-recall-v1
+    secrets:
+      ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
+      ZOTERO_API_KEY: ${{ secrets.ZOTERO_API_KEY }}

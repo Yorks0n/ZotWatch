@@ -36,9 +36,9 @@ class FilterDiagnostic:
     def __init__(self, run_id, profile):
         self.data = {"schema_name": "zotwatch-private-filter-diagnostic", "schema_version": 1,
                      "run_id": run_id, "stages": {}, "candidates": {}, "crossref_dates": [],
-                     "topics": [{"id": t.id, "status": t.status} for t in profile.interests],
+                     "topics": [{"id": t.id, "status": t.status} for t in (profile.interests if profile else [])],
                      "ranking_topic_ids": [],
-                     "active_topic_count": sum(t.status == "active" for t in profile.interests)}
+                     "active_topic_count": sum(t.status == "active" for t in (profile.interests if profile else []))}
 
     def collected(self, works):
         self.data["collected"] = counts(works)

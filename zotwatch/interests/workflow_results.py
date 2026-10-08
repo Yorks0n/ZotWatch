@@ -5,6 +5,7 @@ from pathlib import Path
 from .contract import InterestError
 from .results import parse_result
 from .integration_results import IntegrationRunResult
+from .auto_results import AutoRunResult, result_filename
 
 
 def parse_workflow_result(content: bytes):
@@ -17,6 +18,8 @@ def parse_workflow_result(content: bytes):
             return parse_result(content)
         if version == ("zotwatch-latent-topic-run-result", 3):
             return IntegrationRunResult.model_validate_json(content)
+        if version == ("zotwatch-latent-auto-run-result", 1):
+            return AutoRunResult.model_validate_json(content)
         raise ValueError()
     except (ValueError, TypeError, AttributeError):
         raise InterestError("INTEREST_RESULT_INVALID") from None
@@ -26,7 +29,8 @@ def materialize(machine: Path, process_exit: int, state: Path, destination: Path
     try:
         content = machine.read_bytes()
         value = parse_workflow_result(content)
-        recorded = state / "runs" / f"topic-{value.run_id}.json"
+        prefix = "latent-auto" if isinstance(value, AutoRunResult) else "topic"
+        recorded = state / "runs" / f"{prefix}-{value.run_id}.json"
         if machine.is_symlink() or recorded.is_symlink() or recorded.read_bytes() != content or value.exit_code != process_exit:
             raise ValueError()
         sidecar = state / "runs" / f"latent-deployment-{value.run_id}.json"
@@ -37,8 +41,10 @@ def materialize(machine: Path, process_exit: int, state: Path, destination: Path
                 raise ValueError()
             sidecar_content = sidecar.read_bytes()
             RunDeploymentEvidence.model_validate_json(sidecar_content).validate_result(value)
+        if isinstance(value, AutoRunResult) and sidecar_content is None:
+            raise ValueError("Missing own-model deployment evidence")
         destination.mkdir(parents=True, exist_ok=False)
-        (destination / f"topic-result-v{value.schema_version}.json").write_bytes(content)
+        (destination / result_filename(value)).write_bytes(content)
         if sidecar_content is not None:
             (destination / "latent-deployment-evidence-v1.json").write_bytes(sidecar_content)
         return value

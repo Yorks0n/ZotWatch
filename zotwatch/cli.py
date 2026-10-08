@@ -148,6 +148,12 @@ def _run_v2(arguments: list[str]) -> int:
         return _emit_result(result, machine=args.machine_result)
     recorder.start("config_validation")
     recorder.finish("config_validation")
+    if effective.ranking_policy == "latent-auto-v1":
+        if args.latent_staging or args.latent_recall_model:
+            return _emit_result(recorder.finalize(status="failed", exit_code=2,
+                error_code="CONFIG_OPTION_UNSUPPORTED"), machine=args.machine_result)
+        from zotwatch.interests.auto_runner import run
+        return _emit_result(run(args, paths, effective), machine=args.machine_result)
     if args.latent_lifecycle and (effective.ranking_policy != "topic-v1" or args.latent_staging or args.latent_recall_model or
             (args.command == "watch" and args.candidate_policy != "center-recall-v1")):
         return _emit_result(recorder.finalize(status="failed", exit_code=2,
