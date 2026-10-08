@@ -44,6 +44,7 @@ def _v2_parser() -> argparse.ArgumentParser:
     parser.add_argument("--latent-recall-model", help="Standalone frozen center-recall model.json")
     parser.add_argument("--latent-encoder-cache", help="Local Hugging Face hub containing the exact frozen encoder")
     parser.add_argument("--latent-staging", action="store_true", help="Require exact P5C2 frozen deployment identity")
+    parser.add_argument("--latent-lifecycle", choices=["per-user-v1"], help="Opt-in P5C4 private model lifecycle")
     return parser
 
 
@@ -147,10 +148,14 @@ def _run_v2(arguments: list[str]) -> int:
         return _emit_result(result, machine=args.machine_result)
     recorder.start("config_validation")
     recorder.finish("config_validation")
+    if args.latent_lifecycle and (effective.ranking_policy != "topic-v1" or args.latent_staging or args.latent_recall_model or
+            (args.command == "watch" and args.candidate_policy != "center-recall-v1")):
+        return _emit_result(recorder.finalize(status="failed", exit_code=2,
+                           error_code="CONFIG_OPTION_UNSUPPORTED"), machine=args.machine_result)
     if (args.candidate_policy == "center-recall-v1" and
             (args.command != "watch" or effective.ranking_policy != "topic-v1")) or (
             args.candidate_policy != "center-recall-v1" and
-            (args.latent_recall_model or args.latent_encoder_cache or args.latent_staging)):
+            (args.latent_recall_model or (args.latent_encoder_cache and not args.latent_lifecycle) or args.latent_staging)):
         recorder.fail("config_validation", "CONFIG_OPTION_UNSUPPORTED")
         return _emit_result(recorder.finalize(status="failed", exit_code=2,
                            error_code="CONFIG_OPTION_UNSUPPORTED"), machine=args.machine_result)

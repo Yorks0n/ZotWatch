@@ -24,6 +24,12 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
 
     run_id = uuid4().hex
     evidence, generation = None, None
+    per_user = getattr(args, "latent_lifecycle", None) == "per-user-v1"
+    deployment = None
+    repository_id = int(os.getenv("GITHUB_REPOSITORY_ID") or os.getenv("ZOTWATCH_WORKSPACE_REPOSITORY_ID", "0"))
+    if per_user:
+        from .lifecycle import LifecycleStore, load_runtime, RunDeploymentEvidence
+        lifecycle = LifecycleStore(paths.state)
     integrated = getattr(args, "candidate_policy", "confirmed-topic-candidates-v1") == "center-recall-v1"
     result_type, evidence_type = TopicRunResult, Evidence
     if integrated:
@@ -40,6 +46,12 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
         temporary = target.with_suffix(".tmp")
         temporary.write_text(result.model_dump_json() + "\n", encoding="utf-8")
         temporary.replace(target)
+        if per_user:
+            from .center_recall_contract import digest
+            sidecar = RunDeploymentEvidence(run_id=run_id, deployment=deployment,
+                deployment_sha256=digest(deployment.model_dump()) if deployment else None)
+            sidecar.validate_result(result)
+            (target.parent / f"latent-deployment-{run_id}.json").write_text(sidecar.model_dump_json() + "\n")
         return result
 
     try:
@@ -59,11 +71,14 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                 try:
                     model_path = getattr(args, "latent_recall_model", None) or paths.state / "latent/recall/center-recall-v1/model.json"
                     cache_path = getattr(args, "latent_encoder_cache", None) or encoder_cache()
+                    if per_user:
+                        deployment, recall_runtime = load_runtime(lifecycle, repository_id,
+                            engine._library_identity(effective.settings), cache_path)
                     if getattr(args, "latent_staging", False):
                         from .staging_runtime import validate_model
                         validate_model(model_path)
-                    recall_runtime = LatentRecallRuntime(
-                        model_path, cache_path)
+                    if not per_user:
+                        recall_runtime = LatentRecallRuntime(model_path, cache_path)
                 except LatentRecallUnavailable as exc:
                     return finish("not_ready", exc.reason)
                 evidence = evidence_type.model_validate({**evidence.model_dump(), "latent_recall": recall_runtime.metadata()})
@@ -73,7 +88,7 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                         validate_runtime(model_path, cache_path)
                     except LatentRecallUnavailable as exc:
                         return finish("not_ready", exc.reason)
-        report = preflight(effective)
+        report = preflight(effective, verify_zotero=True) if per_user else preflight(effective)
         if not report.ready:
             return finish("failed", report.error_code, 3)
         with _storage(paths.state) as storage:
@@ -84,6 +99,19 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                 engine.ZoteroIngestor(storage, effective.settings).run(
                     full=args.full or args.weekly,
                     library_identity_sha256=engine._library_identity(effective.settings), lease=lease)
+                if per_user:
+                    from .recall_integration import LatentRecallUnavailable, encoder_cache
+                    cache_path = getattr(args, "latent_encoder_cache", None) or encoder_cache()
+                    try:
+                        lifecycle.ensure(storage, repository_id, engine._library_identity(effective.settings),
+                            cache_path, manual=args.full or args.weekly, lease=lease)
+                        if integrated:
+                            deployment, recall_runtime = load_runtime(lifecycle, repository_id,
+                                engine._library_identity(effective.settings), cache_path)
+                            evidence = evidence_type.model_validate({**evidence.model_dump(), "latent_recall": recall_runtime.metadata()})
+                    except (OSError, ValueError) as exc:
+                        reason = exc.reason if isinstance(exc, LatentRecallUnavailable) else "LATENT_LIFECYCLE_BUILD_FAILED"
+                        return finish("not_ready", reason)
                 handle, _ = engine._ensure_computational_state(
                     paths.workspace, effective.settings, storage, state_root=paths.state,
                     manager=manager, vectorizer=vectorizer, lease=lease, force=args.full or args.weekly)

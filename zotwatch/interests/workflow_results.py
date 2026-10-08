@@ -29,8 +29,18 @@ def materialize(machine: Path, process_exit: int, state: Path, destination: Path
         recorded = state / "runs" / f"topic-{value.run_id}.json"
         if machine.is_symlink() or recorded.is_symlink() or recorded.read_bytes() != content or value.exit_code != process_exit:
             raise ValueError()
+        sidecar = state / "runs" / f"latent-deployment-{value.run_id}.json"
+        sidecar_content = None
+        if sidecar.exists():
+            from .lifecycle import RunDeploymentEvidence
+            if sidecar.is_symlink() or sidecar.stat().st_size > 16384:
+                raise ValueError()
+            sidecar_content = sidecar.read_bytes()
+            RunDeploymentEvidence.model_validate_json(sidecar_content).validate_result(value)
         destination.mkdir(parents=True, exist_ok=False)
         (destination / f"topic-result-v{value.schema_version}.json").write_bytes(content)
+        if sidecar_content is not None:
+            (destination / "latent-deployment-evidence-v1.json").write_bytes(sidecar_content)
         return value
     except (OSError, ValueError):
         raise InterestError("INTEREST_RESULT_INVALID") from None

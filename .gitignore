@@ -40,3 +40,7 @@ __pycache__/
 /build/
 /dist/
 /*.egg-info/
+
+# P5C4 private per-user latent lifecycle
+/data/latent-state-v1/
+/data/latent-remote-v1.json
