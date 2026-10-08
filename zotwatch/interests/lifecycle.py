@@ -117,7 +117,13 @@ class Generation(Closed):
 
 
 def records_for(snapshot):
-    return [dict(key=i.key, title=i.title, abstract=i.abstract, doi=i.doi) for i in sorted(snapshot.items, key=lambda i: i.key)]
+    records = []
+    for item in sorted(snapshot.items, key=lambda i: i.key):
+        raw = item.raw.get("data", {})
+        if raw.get("itemType") in {"attachment", "note", "annotation"} or raw.get("deleted") in (True, 1):
+            continue
+        records.append(dict(key=item.key, title=item.title, abstract=item.abstract, doi=item.doi))
+    return records
 
 
 class LifecycleStore:
@@ -217,7 +223,7 @@ class LifecycleStore:
             from .recall_integration import LatentRecallUnavailable
             raise LatentRecallUnavailable("LATENT_RECALL_ENCODER_UNAVAILABLE") from None
         fingerprint = digest(encoder.model_dump())
-        runtime = f"sklearn:{version('scikit-learn')};numpy:{version('numpy')};{FORMATION_POLICY}"
+        runtime = f"sklearn:{version('scikit-learn')};numpy:{version('numpy')};{FORMATION_POLICY};input=paper-records-v1"
         expected, prior = self.token(), self.current()
         previous, old_vectors, _ = self.load(prior, repository_id, prior.library_identity_sha256) if prior else (None, None, None)
         compatible = previous is not None and previous.library_identity_sha256 == library_identity and previous.embedding_fingerprint == fingerprint

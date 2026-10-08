@@ -259,3 +259,13 @@ def test_durable_transport_numeric_private_identity_and_remote_cas(store, tmp_pa
     git.race=True
     with pytest.raises(ValueError):second.publish(tmp_path/'next')
     assert git.head=='f'*40
+
+
+def test_nonpaper_rows_never_enter_eligibility_or_centroids_even_with_abstract(store):
+    for kind in ['attachment','note','annotation']:
+        item=ZoteroItem.from_zotero_api({'key':kind,'version':10,'data':{'itemType':kind,'title':kind,'abstractNote':'Misleading abstract'}})
+        store[1].upsert_item(item,item.key)
+    d,_,encoded=ensure(store)
+    g,_,_=store[0].load(d,42,IDENTITY)
+    assert encoded==12 and len(g.input_records)==12
+    assert not set(['attachment','note','annotation']) & set(g.embedding_keys)
