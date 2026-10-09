@@ -105,7 +105,7 @@ def test_corrupt_cache_and_top_venues(workspace, settings):
     assert fetcher._load_cache() is None
 
 
-def test_crossref_created_date_and_topvenue_request(workspace, settings, monkeypatch):
+def test_crossref_publication_date_and_topvenue_request(workspace, settings, monkeypatch):
     data = workspace / "data"
     data.mkdir(exist_ok=True)
     (data / "profile.json").write_text('{"top_venues":[{"venue":"Example Journal"}]}')
@@ -117,7 +117,10 @@ def test_crossref_created_date_and_topvenue_request(workspace, settings, monkeyp
     monkeypatch.setattr(fetch_new, "request_with_retry", request)
     direct = fetcher._fetch_crossref(NOW-timedelta(days=7))
     supplement = fetcher._fetch_crossref_top_venues(NOW-timedelta(days=7))
-    assert direct[0].published.year == supplement[0].published.year == 2026
+    # P5C8 intentionally replaces DOI registration time with publication time.
+    assert direct[0].published.year == supplement[0].published.year == 2020
+    assert direct[0].extra["doi_created_at"] == "2026-01-10T00:00:00Z"
+    assert supplement[0].extra["publication_source"] == "crossref:published"
     assert calls[0]["params"]["rows"] == 200
     assert calls[1]["params"]["rows"] == 100
     assert "container-title:Example Journal" in calls[1]["params"]["filter"]

@@ -40,3 +40,11 @@ __pycache__/
 /build/
 /dist/
 /*.egg-info/
+
+# P5C4 private per-user latent lifecycle
+/data/latent-state-v1/
+/data/latent-remote-v1.json
+
+# P5C8 private DOI metadata cache and remote restore authority
+/data/metadata-cache-v1.json
+/data/metadata-remote-v1.json

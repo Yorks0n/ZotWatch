@@ -126,13 +126,15 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "seal-result":
             topics = [Path(args.private) / folder / f"topic-result-v{version}.json"
                       for folder in ("final", "profile") for version in (2, 3)]
+            topics += [Path(args.private) / folder / "latent-auto-result-v1.json" for folder in ("final", "profile")]
             present = [path for path in topics if path.exists()]
             if present:
                 from zotwatch.interests.workflow_results import parse_workflow_result, envelope_evidence
+                from zotwatch.interests.auto_results import result_filename
                 value = parse_workflow_result(present[0].read_bytes())
                 for path in present:
                     companion = parse_workflow_result(path.read_bytes())
-                    if path.is_symlink() or companion.schema_version != value.schema_version or path.name != f"topic-result-v{value.schema_version}.json":
+                    if path.is_symlink() or companion.schema_version != value.schema_version or path.name != result_filename(value) or companion.schema_name != value.schema_name:
                         raise ValueError("INTEREST_RESULT_INVALID")
                 if value.run_id != args.run_id or value.status != args.status or args.publish_requested != "false":
                     raise ValueError("INTEREST_RESULT_INVALID")
@@ -140,13 +142,13 @@ def main(argv: list[str] | None = None) -> int:
                 if not FULL_SHA.fullmatch(args.engine_sha):
                     raise ValueError("INTEREST_ENGINE_INVALID")
                 envelope = {
-                    "schema_name": "zotwatch-topic-workflow-envelope" if value.schema_version == 2 else "zotwatch-latent-topic-workflow-envelope", "schema_version": value.schema_version,
+                    "schema_name": "zotwatch-latent-auto-workflow-envelope" if value.schema_name == "zotwatch-latent-auto-run-result" else "zotwatch-topic-workflow-envelope" if value.schema_version == 2 else "zotwatch-latent-topic-workflow-envelope", "schema_version": value.schema_version,
                     "engine_sha": args.engine_sha, "workspace_repository_id": args.repository_id,
                     "caller_run_id": args.caller_run_id, "run_id": value.run_id,
                     "result_status": value.status, "publish_requested": False,
                     "evidence": envelope_evidence(value),
                 }
-                target = Path(args.private) / f"topic-workflow-envelope-v{value.schema_version}.json"
+                target = Path(args.private) / ("latent-auto-workflow-envelope-v1.json" if value.schema_name == "zotwatch-latent-auto-run-result" else f"topic-workflow-envelope-v{value.schema_version}.json")
                 with target.open("x", encoding="utf-8") as stream:
                     stream.write(json.dumps(envelope) + "\n")
                 return 0
@@ -265,7 +267,7 @@ def _restore(args) -> None:
 def _result(args) -> None:
     from .results import validate_and_materialize_result
 
-    if json.loads(Path(args.machine_result).read_bytes()).get("schema_name") in {"zotwatch-topic-run-result", "zotwatch-latent-topic-run-result"}:
+    if json.loads(Path(args.machine_result).read_bytes()).get("schema_name") in {"zotwatch-topic-run-result", "zotwatch-latent-topic-run-result", "zotwatch-latent-auto-run-result"}:
         from zotwatch.interests.workflow_results import materialize
         value = materialize(Path(args.machine_result), args.process_exit_code, Path(args.state), Path(args.private))
         summary = {"run_id": value.run_id, "status": value.status, "exit_code": value.exit_code,

@@ -297,6 +297,24 @@
     },
     "RankingConfigV2": {
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "policy": {
+                "const": "latent-auto-v1"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "top_n": {
+                "const": 20
+              }
+            }
+          }
+        }
+      ],
       "properties": {
         "max_preprint_ratio": {
           "const": 0.3,
@@ -306,7 +324,8 @@
         "policy": {
           "enum": [
             "legacy-v1",
-            "topic-v1"
+            "topic-v1",
+            "latent-auto-v1"
           ],
           "title": "Policy",
           "type": "string"

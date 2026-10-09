@@ -103,7 +103,7 @@ def load_effective_runtime(workspace: Path | str) -> EffectiveRuntimeConfig:
 
     config = loaded.config
     assert config is not None
-    if config.ranking.policy == "topic-v1" and (config.outputs.formats != ["json"] or config.outputs.publish):
+    if config.ranking.policy in {"topic-v1", "latent-auto-v1"} and (config.outputs.formats != ["json"] or config.outputs.publish):
         from zotwatch.config import ConfigError
         raise ConfigError("CONFIG_OPTION_UNSUPPORTED", "topic-v1 requires private JSON output in P5B1")
     safe_semantics = {

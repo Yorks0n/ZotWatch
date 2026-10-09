@@ -23,7 +23,15 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
     from zotwatch.runtime.preflight import preflight
 
     run_id = uuid4().hex
+    diagnostic = None
     evidence, generation = None, None
+    per_user = getattr(args, "latent_lifecycle", None) == "per-user-v1"
+    deployment = None
+    repository_id = 0
+    if per_user:
+        repository_id = int(os.getenv("GITHUB_REPOSITORY_ID") or os.getenv("ZOTWATCH_WORKSPACE_REPOSITORY_ID", "0"))
+        from .lifecycle import LifecycleStore, load_runtime, RunDeploymentEvidence
+        lifecycle = LifecycleStore(paths.state)
     integrated = getattr(args, "candidate_policy", "confirmed-topic-candidates-v1") == "center-recall-v1"
     result_type, evidence_type = TopicRunResult, Evidence
     if integrated:
@@ -40,6 +48,19 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
         temporary = target.with_suffix(".tmp")
         temporary.write_text(result.model_dump_json() + "\n", encoding="utf-8")
         temporary.replace(target)
+        if diagnostic is not None:
+            try:
+                diagnostic.finish(paths.state, status)
+            except OSError:
+                # Observability failure must not change the accepted result.
+                import logging
+                logging.getLogger(__name__).warning("Private filter diagnostic write failed")
+        if per_user:
+            from .center_recall_contract import digest
+            sidecar = RunDeploymentEvidence(run_id=run_id, deployment=deployment,
+                deployment_sha256=digest(deployment.model_dump()) if deployment else None)
+            sidecar.validate_result(result)
+            (target.parent / f"latent-deployment-{run_id}.json").write_text(sidecar.model_dump_json() + "\n")
         return result
 
     try:
@@ -50,6 +71,9 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
             evidence = evidence_type(feedback_commit_sha=value.feedback_commit_sha,
                                 profile_blob_sha=value.profile_blob_sha,
                                 semantic_input_sha256=semantic_input_hash(value.profile))
+            if args.command == "watch" and os.getenv("ZOTWATCH_PRIVATE_FILTER_DIAGNOSTIC") == "1":
+                from .filter_diagnostic import FilterDiagnostic
+                diagnostic = FilterDiagnostic(run_id, value.profile)
         if args.command == "watch":
             repository_id = int(os.getenv("GITHUB_REPOSITORY_ID") or os.getenv("ZOTWATCH_WORKSPACE_REPOSITORY_ID", "0"))
             state = readiness(value, repository_id, effective.settings.zotero.api.user_id)
@@ -59,11 +83,14 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                 try:
                     model_path = getattr(args, "latent_recall_model", None) or paths.state / "latent/recall/center-recall-v1/model.json"
                     cache_path = getattr(args, "latent_encoder_cache", None) or encoder_cache()
+                    if per_user:
+                        deployment, recall_runtime = load_runtime(lifecycle, repository_id,
+                            engine._library_identity(effective.settings), cache_path)
                     if getattr(args, "latent_staging", False):
                         from .staging_runtime import validate_model
                         validate_model(model_path)
-                    recall_runtime = LatentRecallRuntime(
-                        model_path, cache_path)
+                    if not per_user:
+                        recall_runtime = LatentRecallRuntime(model_path, cache_path)
                 except LatentRecallUnavailable as exc:
                     return finish("not_ready", exc.reason)
                 evidence = evidence_type.model_validate({**evidence.model_dump(), "latent_recall": recall_runtime.metadata()})
@@ -73,7 +100,7 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                         validate_runtime(model_path, cache_path)
                     except LatentRecallUnavailable as exc:
                         return finish("not_ready", exc.reason)
-        report = preflight(effective)
+        report = preflight(effective, verify_zotero=True) if per_user else preflight(effective)
         if not report.ready:
             return finish("failed", report.error_code, 3)
         with _storage(paths.state) as storage:
@@ -84,6 +111,19 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                 engine.ZoteroIngestor(storage, effective.settings).run(
                     full=args.full or args.weekly,
                     library_identity_sha256=engine._library_identity(effective.settings), lease=lease)
+                if per_user:
+                    from .recall_integration import LatentRecallUnavailable, encoder_cache
+                    cache_path = getattr(args, "latent_encoder_cache", None) or encoder_cache()
+                    try:
+                        deployment, _, _ = lifecycle.ensure(storage, repository_id, engine._library_identity(effective.settings),
+                            cache_path, manual=args.full, lease=lease)
+                        if integrated:
+                            deployment, recall_runtime = load_runtime(lifecycle, repository_id,
+                                engine._library_identity(effective.settings), cache_path)
+                            evidence = evidence_type.model_validate({**evidence.model_dump(), "latent_recall": recall_runtime.metadata()})
+                    except (OSError, ValueError) as exc:
+                        reason = exc.reason if isinstance(exc, LatentRecallUnavailable) else "LATENT_LIFECYCLE_BUILD_FAILED"
+                        return finish("not_ready", reason)
                 handle, _ = engine._ensure_computational_state(
                     paths.workspace, effective.settings, storage, state_root=paths.state,
                     manager=manager, vectorizer=vectorizer, lease=lease, force=args.full or args.weekly)
@@ -103,20 +143,50 @@ def run(args, paths, effective, *, snapshot_loader=load_snapshot, ranker=rank):
                 if outcome.status == "degraded":
                     return finish("degraded", "CANDIDATE_PARTIAL", 5)
                 collected = outcome.candidates
+                if diagnostic is not None:
+                    recall_input = diagnostic.collected(collected)
                 if integrated:
                     try:
                         collected, recall_decisions = recall_runtime.recall(collected)
                     except LatentRecallUnavailable as exc:
                         return finish("not_ready", exc.reason)
                     evidence = evidence_type.model_validate({**evidence.model_dump(), "recall_decisions": recall_decisions})
-                candidates = engine.DedupeEngine(storage).filter(collected)
+                    if diagnostic is not None:
+                        for decision in recall_decisions:
+                            if not decision["recalled"]:
+                                diagnostic.reject("center_recall", diagnostic.works[decision["candidate_id"]], decision["qualification"])
+                        diagnostic.stage("center_recall", recall_input, collected)
+                candidates = engine.DedupeEngine(storage).filter(collected, **({"diagnostic":
+                    lambda work, reason: diagnostic.reject("library_dedupe", work, reason)} if diagnostic else {}))
+                if diagnostic is not None:
+                    diagnostic.stage("library_dedupe", collected, candidates)
                 # Existing seven-day and preprint admission rules remain, without metadata scoring.
-                candidates = engine._filter_recent(candidates, days=7)
-                ranked = ranker(value.profile, candidates, vectorizer)
+                def recent_diagnostic(cutoff, before, after):
+                    diagnostic.dates(cutoff)
+                    kept = {c.doi or f"{c.source}:{c.identifier}" for c in after}
+                    for work in before:
+                        if (work.doi or f"{work.source}:{work.identifier}") not in kept:
+                            diagnostic.reject("seven_day_admission", work, "missing_published" if work.published is None else "published_before_cutoff")
+                    diagnostic.stage("seven_day_admission", before, after)
+                candidates = engine._filter_recent(candidates, days=7, **({"diagnostic": recent_diagnostic} if diagnostic else {}))
+                ranked = ranker(value.profile, candidates, vectorizer, **({"diagnostic": diagnostic.topic} if diagnostic and ranker is rank else {}))
                 by_key = {c.doi or f"{c.source}:{c.identifier}": c for c in candidates}
                 ordered = [by_key[item["work_key"]] for item in ranked]
-                allowed = {c.doi or f"{c.source}:{c.identifier}" for c in engine._limit_preprints(ordered, max_ratio=effective.max_preprint_ratio)}
+                preprints = engine._limit_preprints(ordered, max_ratio=effective.max_preprint_ratio)
+                allowed = {c.doi or f"{c.source}:{c.identifier}" for c in preprints}
                 ranked = [r for r in ranked if r["work_key"] in allowed][:effective.top_n]
+                if diagnostic is not None:
+                    diagnostic.stage("confirmed_topic_admission", candidates, ordered)
+                    for work in ordered:
+                        if (work.doi or f"{work.source}:{work.identifier}") not in allowed:
+                            diagnostic.reject("preprint_admission", work, "prefix_preprint_ratio_exceeds_cap")
+                    diagnostic.stage("preprint_admission", ordered, preprints)
+                    final_keys = {r["work_key"] for r in ranked}
+                    final_works = [w for w in preprints if (w.doi or f"{w.source}:{w.identifier}") in final_keys]
+                    for work in preprints:
+                        if (work.doi or f"{work.source}:{work.identifier}") not in final_keys:
+                            diagnostic.reject("final_recommendations", work, "outside_top_n")
+                    diagnostic.stage("final_recommendations", preprints, final_works)
                 if integrated:
                     ranked = attach_recall(ranked, recall_decisions, value.profile_blob_sha)
             return finish("succeeded", "INTEREST_READY", recommendations=ranked)

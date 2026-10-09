@@ -439,11 +439,13 @@ def _log_top_results(ranked: list[RankedWork]) -> None:
         logger.info("%02d | %.3f | %s | %s", idx, work.score, work.label, work.title)
 
 
-def _filter_recent(ranked: list[RankedWork], *, days: int) -> list[RankedWork]:
+def _filter_recent(ranked: list[RankedWork], *, days: int, diagnostic=None) -> list[RankedWork]:
     if days <= 0:
         return ranked
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     kept = [work for work in ranked if work.published and work.published >= cutoff]
+    if diagnostic:
+        diagnostic(cutoff, ranked, kept)
     removed = len(ranked) - len(kept)
     if removed > 0:
         logging.getLogger(__name__).info("Dropped %d items older than %d days", removed, days)
