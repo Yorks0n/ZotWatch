@@ -33,6 +33,8 @@ on:
         required: false
       TYPESAFE_API_KEY:
         required: false
+      ZOTWATCH_COMPATIBLE_API_KEY:
+        required: false
       OPENALEX_API_KEY:
         required: false
       VOYAGE_API_KEY:
@@ -357,6 +359,9 @@ jobs:
           LLM_SHADOW_MODEL: ${{ vars.LLM_SHADOW_MODEL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          ZOTWATCH_COMPATIBLE_API_KEY: ${{ secrets.ZOTWATCH_COMPATIBLE_API_KEY }}
         shell: bash
         run: >-
           python -m zotwatch.staging_ai

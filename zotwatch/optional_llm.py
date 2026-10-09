@@ -56,12 +56,17 @@ Do not reorder or replace papers. Return only JSON with one result per input id:
 
 
 class LocalService(StrictConfigModel):
-    # A shared environment connection; each feature may select a different model.
+    # Existing environment connection remains the fallback for old configs.
+    provider: Literal["openai", "deepseek", "custom", "jev"] | None = None
+    base_url: str | None = None
+    api_key_env: Literal["LLM_API_KEY", "OPENAI_API_KEY", "DEEPSEEK_API_KEY", "TYPESAFE_API_KEY", "ZOTWATCH_COMPATIBLE_API_KEY"] = "LLM_API_KEY"
     model: ModelIdentifier | None = None
     model_env: Literal["LLM_MODEL", "LLM_TRANSLATION_MODEL", "LLM_SHADOW_MODEL"] = "LLM_MODEL"
 
 
 class LocalRoute(FeatureRouteConfig):
+    selected_connection: str | None = None
+    model_override: ModelIdentifier | None = None
     batch_size: int = Field(default=2, ge=1, le=10)
     retry_once: bool = False
 
@@ -89,6 +94,8 @@ class LocalConfig(StrictConfigModel):
     services: dict[str, LocalService] = Field(default_factory=dict)
     features: LocalFeatures = Field(default_factory=LocalFeatures)
     allow_private_context: bool = False
+    output_mode: Literal["english", "bilingual"] = "bilingual"
+    output_language: Literal["en", "zh-CN"] = "zh-CN"
 
     @model_validator(mode="after")
     def routes(self):
@@ -137,17 +144,17 @@ class LLMError(Exception):
 
 
 def connection(service):
-    api_format = os.getenv("LLM_API_FORMAT", "openai")
+    api_format = "openai" if service.provider else os.getenv("LLM_API_FORMAT", "openai")
     if api_format not in ("openai", "anthropic"):
         raise LLMError("unsupported_api_format")
     model = service.model or os.getenv(service.model_env) or os.getenv("LLM_MODEL")
     if not model or not isinstance(model, str) or len(model) > 256 or any(ord(c) < 32 for c in model):
         raise LLMError("missing_or_invalid_model")
     try:
-        endpoint = normalize_custom_base_url(os.getenv("LLM_BASE_URL", ""))
+        endpoint = normalize_custom_base_url(service.base_url or os.getenv("LLM_BASE_URL", ""))
     except Exception:
         raise LLMError("missing_or_invalid_endpoint") from None
-    key = os.getenv("LLM_API_KEY")
+    key = os.getenv(service.api_key_env)
     if not key or not key.strip() or key.strip() in {"xxxx", "replace-with-local-key"}:
         raise LLMError("missing_key")
     return endpoint, key, model, api_format
@@ -233,7 +240,9 @@ def evaluate_batches(config, feature, records, cache_path, *, client_factory=Com
     if not route.enabled:
         return {}, "disabled", metadata
     service = config.services[route.service]
-    api_format = os.getenv("LLM_API_FORMAT", "openai")
+    if route.model_override:
+        service = service.model_copy(update={"model": route.model_override})
+    api_format = "openai" if service.provider else os.getenv("LLM_API_FORMAT", "openai")
     model = service.model or os.getenv(service.model_env) or os.getenv("LLM_MODEL")
     metadata.update(provider=api_format + "-compatible", api_format=api_format, model=model)
     if feature == "shadow" and not config.allow_private_context:

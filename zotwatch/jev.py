@@ -72,8 +72,8 @@ def validate_answer(answer):
 
 
 class JevClient:
-    def __init__(self, model, budget):
-        self.model, self.budget = model, budget
+    def __init__(self, model, budget, endpoint=ENDPOINT):
+        self.model, self.budget, self.endpoint = model, budget, endpoint
         self._key = os.getenv('TYPESAFE_API_KEY', '').strip()
         if not self._key or self._key in {'xxxx', 'replace-with-local-key'}:
             raise LLMError('missing_key')
@@ -88,7 +88,7 @@ class JevClient:
         started = time.monotonic()
         observation = {'elapsed_seconds': 0, 'status': 'api_unavailable'}
         try:
-            response = requests.post(ENDPOINT, headers={'Authorization': 'Bearer ' + self._key},
+            response = requests.post(self.endpoint, headers={'Authorization': 'Bearer ' + self._key},
                 json=payload, timeout=(5, self.budget.timeout_seconds), allow_redirects=False)
             observation['http_status'] = response.status_code
             if response.status_code != 200:
@@ -124,7 +124,9 @@ class JevClient:
 
 def evaluate_jev(config, records, cache_path):
     route = config.features.shadow
-    metadata = dict(provider='jev', model=route.model, endpoint=ENDPOINT, prompt_version=VERSION,
+    service = config.services.get(route.service)
+    endpoint = service.base_url if service and service.base_url else ENDPOINT
+    metadata = dict(provider='jev', model=route.model, endpoint=endpoint, prompt_version=VERSION,
         exclusion_rule_version=EXCLUSION_VERSION,
         requests=0, cache_hits=0, retries=0, failed_attempts=0, request_observations=[],
         reason_source='local mapping of native choice; not generated Jev explanation')
@@ -134,7 +136,7 @@ def evaluate_jev(config, records, cache_path):
         return {}, 'private_context_not_enabled', metadata
     budget = route.budget or FeatureBudgetConfig()
     try:
-        client = JevClient(route.model, budget)
+        client = JevClient(route.model, budget, endpoint) if service else JevClient(route.model, budget)
     except LLMError as exc:
         return {}, str(exc), metadata
     cache, results, pending = {}, {}, []
@@ -150,7 +152,7 @@ def evaluate_jev(config, records, cache_path):
         if index >= budget.max_items:
             results[row['id']] = {'status': 'item_budget_exceeded'}
             continue
-        key = fingerprint(dict(provider='jev', model=route.model, endpoint=ENDPOINT, prompt_version=VERSION,
+        key = fingerprint(dict(provider='jev', model=route.model, endpoint=endpoint, prompt_version=VERSION,
             exclusion_rule_version=EXCLUSION_VERSION,
             instructions=INSTRUCTIONS, criteria=CRITERIA, record=row))
         try:

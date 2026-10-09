@@ -25,7 +25,7 @@ def integrate(config, source, final, cache_dir):
     retained = quality['filtered_recommendations']
     # Never translate body-like source material or expose private representative text.
     translation_papers = [{**r, 'abstract': verified_abstract(r.get('abstract')) or ''} for r in retained]
-    translations = translate(config, translation_papers, cache_dir / 'translation-cache-v1.json')
+    translations = translate(config, translation_papers, cache_dir / 'translation-cache-v1.json', mode=config.output_mode)
     outputs = []
     for row in translations['papers']:
         successful = row['status'] in {'succeeded', 'cached'}
