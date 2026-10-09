@@ -6,6 +6,7 @@ into the Pages checkout. Only feed.xml and a constant index.html may be pushed.
 """
 import argparse
 import hashlib
+from html import escape
 from html.parser import HTMLParser
 import io
 import json
@@ -32,6 +33,7 @@ ITEM_FIELDS = {"title", "link", "guid", "pubDate", "description"}
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 DOI = re.compile(r"10\.\d{4,9}/[^\s?#]+", re.I)
 ARXIV = re.compile(r"(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?", re.I)
+DESCRIPTION_PREFIX = '<div class="zotwatch-rss-description-v4">'
 
 
 def request(url, token=None, limit=8 * 1024 * 1024):
@@ -117,6 +119,12 @@ def load_final(source, run_id):
                     or any(r["score"] != r["center_cosine"] or not .55 <= r["score"] <= 1 or
                         r["primary_center_id"] not in final["evidence"]["formal_center_ids"] for r in final["recommendations"])):
                 raise ValueError("Invalid latent-auto provenance")
+        optional = None
+        if auto and "rss-ai-v1.json" in names:
+            try:
+                optional = read_json("rss-ai-v1.json")
+            except (ValueError, KeyError, TypeError):
+                pass  # Invalid optional delivery data cannot suppress original recommendations.
     if (str(envelope["caller_run_id"]) != str(run_id)
             or str(envelope["workspace_repository_id"]) != str(run["repository"]["id"])
             or envelope["run_id"] != final["run_id"]
@@ -126,7 +134,35 @@ def load_final(source, run_id):
         return None
     if final["exit_code"] != 0 or not isinstance(final["recommendations"], list):
         raise ValueError("Invalid successful result")
-    return final
+    return apply_delivery_sidecar(final, optional) if auto and optional is not None else final
+
+
+def apply_delivery_sidecar(final, value):
+    """Validate a closed public projection bound to this exact immutable result."""
+    try:
+        if (set(value) != {"schema_name", "schema_version", "run_id", "source_final_sha256", "retained_work_keys", "papers"}
+            or value["schema_name"] != "zotwatch-staging-rss-ai" or value["schema_version"] != 1
+            or value["run_id"] != final["run_id"]
+            or value["source_final_sha256"] != hashlib.sha256(json.dumps(final, ensure_ascii=False,
+                sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()):
+            raise ValueError("Wrong delivery source")
+        keys = value["retained_work_keys"]
+        original = final["recommendations"]
+        selected = [r for r in original if r["work_key"] in keys]
+        if (not isinstance(keys, list) or any(not isinstance(k, str) for k in keys)
+            or keys != [r["work_key"] for r in selected] or not isinstance(value["papers"], list)
+            or len(value["papers"]) != len(keys)):
+            raise ValueError("Reordered, replaced or duplicate recommendations")
+        for row, paper in zip(selected, value["papers"]):
+            if (set(paper) != {"work_key", "title_en", "abstract_en", "title_zh", "abstract_zh"}
+                or paper["work_key"] != row["work_key"] or plain(paper["title_en"]) != plain(row["title"])
+                or not isinstance(paper["abstract_en"], str) or len(paper["abstract_en"]) > 6000
+                or any(v is not None and (not isinstance(v, str) or len(v) > limit)
+                       for v, limit in ((paper["title_zh"], 4000), (paper["abstract_zh"], 50000)))):
+                raise ValueError("Nonpublic or invalid delivery data")
+        return {**final, "recommendations": selected, "_staging_ai": {r["work_key"]: r for r in value["papers"]}}
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return final
 
 
 def identity(row):
@@ -163,7 +199,117 @@ def plain(value):
     return text
 
 
-def public_abstract(guid):
+class AbstractHTML(HTMLParser):
+    """Keep semantic JATS/HTML formatting without provider attributes or URLs."""
+    TAGS = {"p": "p", "title": "h3", "h1": "h3", "h2": "h3", "h3": "h3",
+            "h4": "h3", "h5": "h3", "h6": "h3", "sec": "div", "div": "div",
+            "bold": "strong", "b": "strong", "strong": "strong",
+            "italic": "em", "i": "em", "em": "em", "sup": "sup", "sub": "sub",
+            "ul": "ul", "ol": "ol", "li": "li", "list": "ul", "list-item": "li"}
+    BLOCKS = {"p", "h3", "div", "ul", "ol", "li"}
+
+    def __init__(self, markup=False):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.stack = [], []
+        self.hidden = 0
+        self.markup = markup
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.rsplit(":", 1)[-1]
+        if tag in {"script", "style"}:
+            self.hidden += 1
+        elif not self.hidden:
+            if tag in {"br", "break"}:
+                self.parts.append("<br>")
+            elif tag in self.TAGS:
+                mapped = self.TAGS[tag]
+                # JATS permits a list inside p; HTML does not. Close the HTML
+                # paragraph first, and ignore its later unmatched source endtag.
+                if mapped in self.BLOCKS and any(opened == "p" for _, opened in self.stack):
+                    while self.stack:
+                        _, opened = self.stack.pop()
+                        self.parts.append("</" + opened + ">")
+                        if opened == "p":
+                            break
+                self.parts.append("<" + mapped + ">")
+                self.stack.append((tag, mapped))
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag.rsplit(":", 1)[-1] not in {"br", "break"}:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        tag = tag.rsplit(":", 1)[-1]
+        if tag in {"script", "style"}:
+            self.hidden = max(0, self.hidden - 1)
+        elif not self.hidden and any(original == tag for original, _ in self.stack):
+            while self.stack:
+                original, mapped = self.stack.pop()
+                self.parts.append("</" + mapped + ">")
+                if original == tag:
+                    break
+
+    def handle_data(self, data):
+        if self.hidden:
+            return
+        if self.markup:
+            # XML source indentation is ordinary inline whitespace, not <br>.
+            self.parts.append(escape(re.sub(r"\s+", " ", data)))
+            return
+        if not data.strip():
+            if data and "\n" not in data:
+                self.parts.append(" ")
+            return
+        lines = data.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        self.parts.append("<br>".join(escape(re.sub(r"[\t ]+", " ", line)) for line in lines))
+
+    def result(self):
+        self.close()
+        while self.stack:
+            _, mapped = self.stack.pop()
+            self.parts.append("</" + mapped + ">")
+        html = "".join(self.parts)
+        if self.markup:
+            # Pretty-printed inline tags also leave spaces inside parentheses
+            # and before superscripts, e.g. "( <em>rice</em> )" and "Na <sup>+".
+            html = re.sub(r"([\(\[]) +", r"\1", html)
+            html = re.sub(r" +([,\)\]])", r"\1", html)
+            html = re.sub(r" +(?=<(?:sup|sub)>)", "", html)
+            html = re.sub(r"(<(?:sup|sub)>) +", r"\1", html)
+            html = re.sub(r" +(?=</(?:sup|sub)>)", "", html)
+        # A JATS paragraph that only wraps a list must not leave an empty HTML p.
+        return re.sub(r"<p>\s*</p>", "", html).strip()
+
+
+def abstract_html(value):
+    if not isinstance(value, str) or len(value) > 100000 or any(ord(c) < 32 and c not in "\n\r\t" for c in value):
+        raise ValueError("Invalid public abstract")
+    parser = AbstractHTML(markup=bool(re.search(r"</?[A-Za-z][\w:.-]*(?:\s[^<>]*)?/?>", value)))
+    parser.feed(value)
+    return parser.result()
+
+
+def description(abstract, journal, link):
+    body = abstract_html(abstract)
+    return (DESCRIPTION_PREFIX + ("<div>" + body + "</div>" if body else "")
+            + "<p>Journal: " + escape(plain(journal) or "Not provided") + "</p>"
+            + '<p>Original article: <a href="' + escape(link, quote=True) + '">'
+            + escape(link) + "</a></p></div>")
+
+
+def delivery_description(paper, journal, link):
+    if not paper.get("abstract_zh"):
+        return description(paper["abstract_en"], journal, link)
+    return ('<div class="zotwatch-rss-description-v5"><h3>English</h3><div>'
+        + abstract_html(paper["abstract_en"]) + '</div><h3>中文</h3><div>'
+        + abstract_html(paper["abstract_zh"]) + '</div><p>Journal: '
+        + escape(plain(journal) or "Not provided") + '</p><p>Original article: <a href="'
+        + escape(link, quote=True) + '">' + escape(link) + '</a></p></div>')
+
+
+def public_metadata(guid):
+    journal = ""
     if guid.startswith("urn:doi:"):
         doi = guid[8:]
         # Public exact-DOI fallback matches the private enrichment priority.
@@ -171,9 +317,10 @@ def public_abstract(guid):
             metadata = json.loads(request("https://api.crossref.org/works/" + quote(doi, safe="")))["message"]
             if metadata["DOI"].lower() != doi:
                 raise ValueError("Public metadata identity mismatch")
-            abstract = plain(metadata.get("abstract", ""))
-            if abstract:
-                return abstract
+            journal = plain(next(iter(metadata.get("container-title") or []), ""))
+            abstract = metadata.get("abstract", "")
+            if plain(abstract):
+                return {"abstract": abstract, "journal": journal}
         except (OSError, ValueError, KeyError):
             pass
         try:
@@ -181,9 +328,10 @@ def public_abstract(guid):
             metadata = json.loads(request(url))
             for row in metadata.get("resultList", {}).get("result", []):
                 if (row.get("doi") or "").lower() == doi:
-                    abstract = plain(row.get("abstractText", ""))
-                    if abstract:
-                        return abstract
+                    journal = journal or plain(((row.get("journalInfo") or {}).get("journal") or {}).get("title", ""))
+                    abstract = row.get("abstractText", "")
+                    if plain(abstract):
+                        return {"abstract": abstract, "journal": journal}
         except (OSError, ValueError, KeyError):
             pass
         try:
@@ -199,16 +347,22 @@ def public_abstract(guid):
                     if type(position) is not int or not 0 <= position < 50000 or position in words:
                         raise ValueError("Invalid public abstract index")
                     words[position] = word
-            return plain(" ".join(words[i] for i in sorted(words)))
+            journal = journal or plain(((metadata.get("primary_location") or {}).get("source") or {}).get("display_name", ""))
+            return {"abstract": " ".join(words[i] for i in sorted(words)), "journal": journal}
         except (OSError, ValueError, KeyError, TypeError):
-            return ""
+            return {"abstract": "", "journal": journal}
     identifier = guid[10:]
     root = ET.fromstring(request("https://export.arxiv.org/api/query?id_list=" + quote(identifier, safe="")))
     ns = {"a": "http://www.w3.org/2005/Atom"}
     entry = root.find("a:entry", ns)
     if entry is None or not re.search(re.escape(identifier) + r"(?:v\d+)?$", entry.findtext("a:id", "", ns)):
         raise ValueError("Public metadata identity mismatch")
-    return plain(entry.findtext("a:summary", "", ns))
+    return {"abstract": entry.findtext("a:summary", "", ns), "journal": "arXiv"}
+
+
+def public_abstract(guid):
+    """Legacy plain-text accessor; RSS rendering uses the original public markup."""
+    return plain(public_metadata(guid)["abstract"])
 
 
 def read_feed(data):
@@ -235,23 +389,69 @@ def read_feed(data):
     return items
 
 
-def merge_feed(final, old, feed_url, now=None, resolve=public_abstract):
-    """No mutation for non-success or repeats; keep first RSS publication date."""
-    if final is None or final.get("status") != "succeeded" or final.get("command") != "watch":
+def previous_metadata(value):
+    """Separate our versioned description's body/footer during a format upgrade."""
+    wrapper = re.match(r'<div class="zotwatch-rss-description-v[23]">', value)
+    if not wrapper:
+        return value, ""
+    # Match the final generated footer, not labels that might occur in the body.
+    footer = re.search(r'<p>(?:期刊来源：|Journal: )(.*?)</p>'
+                       r'<p>(?:原文链接：|Original article: )<a href="[^"]*">[^<]*</a></p></div>$', value, re.S)
+    if not footer:
+        raise ValueError("Invalid previous RSS description")
+    body = value[wrapper.end():footer.start()]
+    if body.startswith("<div>") and body.endswith("</div>"):
+        body = body[5:-6]
+    journal = plain(footer.group(1))
+    return body, "" if journal in {"未提供", "Not provided"} else journal
+
+
+def merge_feed(final, old, feed_url, now=None, resolve=public_metadata):
+    """Upgrade old descriptions once; keep GUIDs and first RSS publication dates."""
+    if final is None or final.get("status") != "succeeded" or final.get("command") != "watch" or not final["recommendations"]:
         return old, 0
     items = read_feed(old)
     fresh = {}
+    reformatted = False
+    venues = {identity(row)[0]: row.get("venue", "") for row in final["recommendations"]}
+    delivery = {identity({"work_key": key})[0]: paper for key, paper in final.get("_staging_ai", {}).items()}
+    for guid, item in items.items():
+        if not item["description"].startswith((DESCRIPTION_PREFIX, '<div class="zotwatch-rss-description-v5">')):
+            metadata = resolve(guid)
+            if isinstance(metadata, str):
+                metadata = {"abstract": metadata, "journal": ""}
+            # Preserve the previous abstract if the public provider is unavailable,
+            # without nesting its already-generated journal/link footer.
+            previous, previous_journal = previous_metadata(item["description"])
+            item["description"] = description(metadata["abstract"] or previous,
+                                              metadata["journal"] or venues.get(guid, "") or previous_journal, item["link"])
+            reformatted = True
     stamp = format_datetime(now or datetime.now(timezone.utc), usegmt=True)
     for row in final["recommendations"]:
         guid, link = identity(row)
+        if guid in delivery:
+            paper = delivery[guid]
+            rendered = dict(title=plain(row["title"]) + (" | " + plain(paper["title_zh"]) if paper.get("title_zh") else ""),
+                link=link, guid=guid, pubDate=items[guid]["pubDate"] if guid in items else stamp,
+                description=delivery_description(paper, venues[guid], link))
+            if guid in items:
+                if items[guid] != rendered:
+                    items[guid] = rendered
+                    reformatted = True
+            else:
+                fresh[guid] = rendered
+            continue
         if guid not in items and guid not in fresh:
             title = plain(row["title"])
             if not title:
                 raise ValueError("Empty public title")
             # Private final v2/v3 have no abstract. Resolve only selected public IDs.
-            abstract = resolve(guid)
-            fresh[guid] = dict(title=title, link=link, guid=guid, pubDate=stamp, description=abstract)
-    if not fresh:
+            metadata = resolve(guid)
+            if isinstance(metadata, str):
+                metadata = {"abstract": metadata, "journal": ""}
+            fresh[guid] = dict(title=title, link=link, guid=guid, pubDate=stamp,
+                              description=description(metadata["abstract"], metadata["journal"] or venues[guid], link))
+    if not fresh and not reformatted:
         return old, 0
     items.update(fresh)
     selected = sorted(items.values(), key=lambda row: (parsedate_to_datetime(row["pubDate"]), row["guid"]), reverse=True)[:100]
@@ -321,7 +521,7 @@ def publish(final, target, destination, feed_url):
         git("remote", "add", "origin", remote, cwd=destination)
         old = None
     data, count = merge_feed(final, old, feed_url)
-    if count == 0:
+    if data == old:
         return {"changed": False, "new_items": 0, "items": len(read_feed(old))}
     (destination / "feed.xml").write_bytes(data)
     (destination / "index.html").write_text(INDEX)

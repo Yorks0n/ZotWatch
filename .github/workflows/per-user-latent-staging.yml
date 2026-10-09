@@ -29,6 +29,10 @@ on:
         required: false
       ZOTERO_API_KEY:
         required: false
+      LLM_API_KEY:
+        required: false
+      TYPESAFE_API_KEY:
+        required: false
       OPENALEX_API_KEY:
         required: false
       VOYAGE_API_KEY:
@@ -324,6 +328,42 @@ jobs:
           --private "$RUNNER_TEMP/zotwatch-operational/final"
           --summary-output "$RUNNER_TEMP/result-summary.json"
           --github-output
+
+      - name: Restore independent translation cache
+        if: inputs.mode == 'run'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/zotwatch-state/optional-ai-cache-v1/translation-cache-v1.json
+          key: zotwatch-translation-${{ github.repository_id }}-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: zotwatch-translation-${{ github.repository_id }}-v1-
+
+      - name: Restore independent selected-provider judgment caches
+        if: inputs.mode == 'run'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ${{ runner.temp }}/zotwatch-state/optional-ai-cache-v1/quality-llm-cache-v1.json
+            ${{ runner.temp }}/zotwatch-state/optional-ai-cache-v1/jev-cache-v1.json
+          key: zotwatch-quality-${{ github.repository_id }}-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: zotwatch-quality-${{ github.repository_id }}-v1-
+
+      - name: Apply optional staging AI delivery after original Top 20
+        if: inputs.mode == 'run' && steps.result.outputs.status == 'succeeded'
+        env:
+          LLM_API_FORMAT: ${{ vars.LLM_API_FORMAT || 'openai' }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          LLM_TRANSLATION_MODEL: ${{ vars.LLM_TRANSLATION_MODEL }}
+          LLM_SHADOW_MODEL: ${{ vars.LLM_SHADOW_MODEL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+        shell: bash
+        run: >-
+          python -m zotwatch.staging_ai
+          --config "$GITHUB_WORKSPACE/workspace/zotwatch-optional-ai.yaml"
+          --result "$RUNNER_TEMP/machine-result.json"
+          --state "$RUNNER_TEMP/zotwatch-state"
+          --destination "$RUNNER_TEMP/zotwatch-operational"
 
       - name: Select authoritative result
         id: aggregate
