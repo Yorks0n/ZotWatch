@@ -1,5 +1,7 @@
 # ZotWatcher
 
+> 当前开发状态（2026-10-09）：P5C8 staging 已验收，涵盖每用户模型、自动推荐、摘要缓存、发表日期校正及 RSS v4。整理后的本地代码、staging 版本对应关系与验证结果见 [本地封存记录](docs/LOCAL_CODE_SEAL_20261009.md)。生产 rollout 仍为 NO-GO；下文保留早期版本的使用说明。
+
 [English Version](README.en.md)
 
 ZotWatcher 是一个基于 Zotero 数据构建个人兴趣画像，并持续监测学术信息源的新文献推荐流程。它每日在 GitHub Actions 上运行，将最新候选文章生成 RSS/HTML 报告，必要时也可在本地手动执行。
