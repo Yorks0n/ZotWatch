@@ -301,8 +301,8 @@ def description(abstract, journal, link):
 def delivery_description(paper, journal, link):
     if not paper.get("abstract_zh"):
         return description(paper["abstract_en"], journal, link)
-    return ('<div class="zotwatch-rss-description-v5"><h3>English</h3><div>'
-        + abstract_html(paper["abstract_en"]) + '</div><h3>中文</h3><div>'
+    return ('<div class="zotwatch-rss-description-v5"><h3>Abstract</h3><div>'
+        + abstract_html(paper["abstract_en"]) + '</div><h3>摘要</h3><div>'
         + abstract_html(paper["abstract_zh"]) + '</div><p>Journal: '
         + escape(plain(journal) or "Not provided") + '</p><p>Original article: <a href="'
         + escape(link, quote=True) + '">' + escape(link) + '</a></p></div>')
