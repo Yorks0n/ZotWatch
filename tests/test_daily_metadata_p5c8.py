@@ -3,7 +3,7 @@ import json
 from types import SimpleNamespace
 import pytest
 from src.models import CandidateWork
-from zotwatch.metadata import Cache, Providers, enrich, resolve, normalize_doi
+from zotwatch.metadata import Cache, Providers, enrich, resolve, normalize_doi, abstract_rejection
 from zotwatch.publication_dates import crossref_date, date_datetime, admission
 from zotwatch.metadata_transport import MetadataGitState, BRANCH
 
@@ -120,3 +120,53 @@ def test_rss_public_enrichment_fallback_and_idempotency(monkeypatch):
     result=dict(status='succeeded',command='watch',recommendations=[{'work_key':DOI,'title':'Paper'}])
     feed,n=rss.merge_feed(result,None,'https://example.com/feed.xml',NOW)
     assert n==1 and rss.merge_feed(result,feed,'https://example.com/feed.xml',NOW)==(feed,0)
+
+
+def test_body_contamination_rejected_and_other_doi_source_used(tmp_path):
+    body = 'Research body. ' * 600 + ' Author contributions: sole contributor.'
+    class Contaminated(Stub):
+        def crossref(self, doi):
+            self.calls.append('crossref')
+            return {'DOI':doi, 'abstract':body}
+    providers=Contaminated()
+    entry=resolve(DOI,NOW,providers)
+    assert entry['abstract']=='Europe PMC abstract' and entry['abstract_source']=='europe_pmc'
+    assert 'crossref:body_or_back_matter' in entry['unavailable_providers']
+    cache=Cache(tmp_path,42)
+    cache.entries[DOI]={**entry, 'abstract':body, 'abstract_source':'openalex'}
+    cache.save()
+    candidate=work(abstract=body)
+    enrich([candidate],Cache(tmp_path,42),NOW,providers)
+    assert candidate.abstract=='Europe PMC abstract'
+    assert candidate.extra['abstract_rejected_reason']=='body_or_back_matter'
+
+
+def test_no_verified_abstract_never_uses_body_snippet():
+    class NoAbstract(Stub):
+        def openalex(self,doi):
+            return 'Whole article. ' * 600 + ' Author contributions: sole contributor.'
+    entry=resolve(DOI,NOW,NoAbstract(abstract=None))
+    assert entry['abstract'] is None and entry['abstract_status']=='unavailable'
+    assert 'openalex:body_or_back_matter' in entry['unavailable_providers']
+    assert abstract_rejection('Author A; Title, Journal, https://doi.org/10.1234/example')=='citation_only'
+
+
+def test_rss_rejects_pollution_and_keeps_exact_doi_fallback_order(monkeypatch):
+    from .test_github_pages_rss import rss
+    calls=[]
+    def request(url,*a,**kw):
+        calls.append(url)
+        if 'api.crossref.org' in url:
+            return json.dumps({'message':{'DOI':DOI,'abstract':'<p>Body. Author contributions: contaminated.</p>'}}).encode()
+        if 'europepmc' in url:
+            return json.dumps({'resultList':{'result':[{'doi':DOI,'abstractText':'<p>Verified replacement abstract.</p>'}]}}).encode()
+        pytest.fail('OpenAlex must not run after verified replacement')
+    monkeypatch.setattr(rss,'request',request)
+    assert rss.public_metadata('urn:doi:'+DOI)['abstract']=='<p>Verified replacement abstract.</p>'
+    assert len(calls)==2 and 'crossref' in calls[0] and 'europepmc' in calls[1]
+    def only_pollution(url,*a,**kw):
+        if 'api.crossref.org' in url:return json.dumps({'message':{'DOI':DOI}}).encode()
+        if 'europepmc' in url:return json.dumps({'resultList':{'result':[]}}).encode()
+        return json.dumps({'doi':'https://doi.org/'+DOI,'abstract_inverted_index':{'Author':[0],'contributions:':[1],'not an abstract':[2]}}).encode()
+    monkeypatch.setattr(rss,'request',only_pollution)
+    assert rss.public_metadata('urn:doi:'+DOI)['abstract']==''

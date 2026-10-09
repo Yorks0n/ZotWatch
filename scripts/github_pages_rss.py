@@ -308,6 +308,15 @@ def delivery_description(paper, journal, link):
         + escape(link, quote=True) + '">' + escape(link) + '</a></p></div>')
 
 
+def valid_public_abstract(value):
+    """Same accepted text checks as metadata enrichment; keep safe source markup."""
+    text = plain(value)
+    return bool(text) and len(text) <= 6000 and not re.search(
+        r"\b(author contributions?|conflict of interest|publisher.s note|"
+        r"data availability statement|the author confirms being the sole contributor)\b",
+        text, re.I) and not (len(text) < 600 and re.search(r"[,;].*https?:", text, re.I))
+
+
 def public_metadata(guid):
     journal = ""
     if guid.startswith("urn:doi:"):
@@ -319,7 +328,7 @@ def public_metadata(guid):
                 raise ValueError("Public metadata identity mismatch")
             journal = plain(next(iter(metadata.get("container-title") or []), ""))
             abstract = metadata.get("abstract", "")
-            if plain(abstract):
+            if valid_public_abstract(abstract):
                 return {"abstract": abstract, "journal": journal}
         except (OSError, ValueError, KeyError):
             pass
@@ -330,7 +339,7 @@ def public_metadata(guid):
                 if (row.get("doi") or "").lower() == doi:
                     journal = journal or plain(((row.get("journalInfo") or {}).get("journal") or {}).get("title", ""))
                     abstract = row.get("abstractText", "")
-                    if plain(abstract):
+                    if valid_public_abstract(abstract):
                         return {"abstract": abstract, "journal": journal}
         except (OSError, ValueError, KeyError):
             pass
@@ -348,7 +357,8 @@ def public_metadata(guid):
                         raise ValueError("Invalid public abstract index")
                     words[position] = word
             journal = journal or plain(((metadata.get("primary_location") or {}).get("source") or {}).get("display_name", ""))
-            return {"abstract": " ".join(words[i] for i in sorted(words)), "journal": journal}
+            abstract = " ".join(words[i] for i in sorted(words))
+            return {"abstract": abstract if valid_public_abstract(abstract) else "", "journal": journal}
         except (OSError, ValueError, KeyError, TypeError):
             return {"abstract": "", "journal": journal}
     identifier = guid[10:]
@@ -357,7 +367,8 @@ def public_metadata(guid):
     entry = root.find("a:entry", ns)
     if entry is None or not re.search(re.escape(identifier) + r"(?:v\d+)?$", entry.findtext("a:id", "", ns)):
         raise ValueError("Public metadata identity mismatch")
-    return {"abstract": entry.findtext("a:summary", "", ns), "journal": "arXiv"}
+    abstract = entry.findtext("a:summary", "", ns)
+    return {"abstract": abstract if valid_public_abstract(abstract) else "", "journal": "arXiv"}
 
 
 def public_abstract(guid):
