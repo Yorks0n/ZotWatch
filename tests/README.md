@@ -1,5 +1,27 @@
 # E0：1.x characterization / golden baseline
 
+P5B3 的可选聚类测试另用 `tests/requirements-latent.txt` 安装依赖，运行
+`python -m pytest -c tests/pytest.ini tests/test_latent_p5b3.py -q`。
+专项 CI job 安装并验证真实 HDBSCAN；普通 E0 环境不安装可选 runtime 时跳过
+该模块。真实库质量评估与结果见 [P5B3_RESULTS.md](../docs/P5B3_RESULTS.md)。
+
+`tests/test_auto_spherical_p5b3.py` 验证按库大小选择 K、支持数/方向数上限、
+小库与非法输入，以及 wrapper 只调用一次原 spherical fitter、输出与显式 K 一致。
+设计与本地评估见 [P5B3_AUTO_SPHERICAL.md](../docs/P5B3_AUTO_SPHERICAL.md)。
+
+`tests/test_membership_qualification_p5b3.py` 验证 abstract-only qualification、
+weak/ambiguous exclusion、≥10 distinct strong works、一次 trimming、
+title-only metadata 隔离、代表文献去重及 post-trim 漂移只告警。
+私有真实库报告为 `docs/P5B3_MEMBERSHIP_QUALIFICATION.md`；聚合记录见
+[P5B3_RESULTS.md](../docs/P5B3_RESULTS.md)。
+
+2026-10-01 起，当前 formation 路径先排除 title-only，再调用固定 auto-K 和
+qualification。旧 membership 报告属于历史 mixed-eligibility 实验；新报告为
+`docs/P5B3_EMBEDDING_MODEL_BENCHMARK.md`。`tests/test_embedding_benchmark_p5b3.py`
+使用合成 tokenizer/encoder 验证完整分窗、batched 等价和 uniform overflow
+拆分，不下载模型。eligibility 测试另验证 title-only 不影响 K/分配/coverage、
+不能形成关联 membership，以及持久化 excluded_keys 与 legacy-policy 缓存迁移。
+
 2026-09-10 首次捕获记录：在未修改的 `bf10c3c02b525ea191c5ed0f978a187a981f01c8` 上连续两次 **65 passed**。此次仅新增 tests 和独立 characterization workflow，未修改 src、原配置、生产依赖或 daily workflow。
 
 远端封板使用 `codex/v2-e0` → `codex/v2` 的独立 PR；以该 PR 的 CI、合并提交及 `v2-e0-baseline` 内部标签记录最终结果。下文为本地捕获时的证据，不代表远端已通过；必须在远端验证和 PR 合入后才可开始 E1。
@@ -74,3 +96,25 @@ PYTHONHASHSEED=0 TZ=UTC OMP_NUM_THREADS=1 /tmp/zotwatch-e0-venv/bin/python -m py
 新增 [characterization.yml](../.github/workflows/characterization.yml) 使用只读权限、不注入 Secrets，安装后连续运行两遍。Action 固定完整提交：[checkout](https://github.com/actions/checkout/commit/11bd71901bbe5b1630ceea73d27597364c9af683)、[setup-python](https://github.com/actions/setup-python/commit/a26af69be951a213d495a4c3e4e4022e16d87065)。本地捕获时尚未推送或触发 GitHub CI；Ubuntu runner 的实际证据由上述独立 PR 的 Checks 记录。
 
 E1/E2 纯重构必须保持这些测试。E3 等有意修复缺陷时，先添加能暴露新要求的 regression，再修改实现及对应期望，列明编号、理由和受影响输出；不得批量重生 golden 消除差异。合入 E0 是进入 E1 的前置门槛，本次没有实现 AI adapter。
+### Frozen P5B3 candidate and isolated P5B4 recall
+
+The current real-library candidate is accepted only as a bounded retrieval
+structure in private `docs/P5B3_QUALITY_ACCEPTANCE.md`; all formation/model policy
+searches stop. `data/latent/frozen/p5b3-v1` holds exact centers, stable IDs, policies,
+input/weight/vector checksums and raw/qualified evidence, without changing the
+old local publisher or accepted P5C baseline.
+
+`test_frozen_candidate_p5b3.py` checks private capsule integrity and eligibility.
+`test_center_recall_p5b4.py` checks centroid-only `center-recall-v1`, inclusive
+thresholds, fingerprint/revision provenance, non-additive center evidence,
+closed artifact validation and runtime independence from historical vector files.
+The old dual-gate checks now live in `test_dual_gate_benchmark_p5b4.py`, importing
+only the archived `scripts/benchmarks` implementation; they are not runtime tests.
+All are synthetic offline tests with no download or private-library dependency.
+
+Private `docs/P5B4_CENTER_SUPPORTED_RECALL.md` is historical dual-gate evidence.
+Current `docs/P5B4_QUALITY_ACCEPTANCE.md` freezes centroid-only recall with the
+existing 0.55 sample threshold and exact P5B3 revision. Runtime reads a separate
+compact centroid JSON, with no member vectors or dynamic explanations. The
+threshold is experimental, not universally calibrated. This slice is not
+connected to ranking/dispatch/UI/LLM.
