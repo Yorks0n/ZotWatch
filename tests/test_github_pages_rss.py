@@ -160,3 +160,55 @@ class RSSDelivery(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_reader_assets_preserve_items_and_first_dates():
+    data, _ = rss.merge_feed(final('a', 'b'), None, URL, NOW, resolve=lambda _: 'Public abstract & text')
+    assets = rss.delivery_assets(data, URL)
+    assert set(assets) == {'feed.xml', 'feed.xsl', 'index.html'}
+    assert rss.read_feed(assets['feed.xml']) == rss.read_feed(data)
+    assert assets['feed.xml'].count(b'<?xml-stylesheet ') == 1
+    assert b'href="feed.xsl"' in assets['feed.xml']
+    assert rss.delivery_assets(assets['feed.xml'], URL) == assets
+    html = assets['index.html'].decode()
+    assert 'Public abstract &amp; text' in html and 'PRIVATE' not in html
+    assert html.count('<article>') == 2 and URL in html
+    rss.ET.fromstring(assets['feed.xsl'])
+
+
+def test_static_reader_sanitizes_html_without_executing_description():
+    data, _ = rss.merge_feed(final('a'), None, URL, NOW, resolve=lambda _: 'Public')
+    root = rss.ET.fromstring(data)
+    root.find('channel/item/description').text = '<p onclick="bad()">Safe<em>text</em></p><script>private()</script><img src="https://private">'
+    html = rss.reader_html(rss.ET.tostring(root), URL)
+    assert '<em>text</em>' in html and 'Safe' in html
+    assert '<script' not in html and '<img' not in html and 'onclick' not in html and 'private()' not in html
+    assert 'disable-output-escaping' not in rss.XSLT
+
+
+def test_publish_installs_styles_even_when_items_are_unchanged(tmp_path, monkeypatch):
+    import subprocess
+    target = 'owner/feed'
+    remote = tmp_path / 'remote'
+    remote.mkdir()
+    def run(*args, cwd=remote):
+        return subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    run('init', '--initial-branch=gh-pages')
+    run('config', 'receive.denyCurrentBranch', 'updateInstead')
+    data, _ = rss.merge_feed(final('a'), None, URL, NOW, resolve=lambda _: 'Public abstract')
+    (remote / 'feed.xml').write_bytes(data)
+    (remote / 'index.html').write_text('<p>Old subscribe page</p>')
+    run('add', 'feed.xml', 'index.html')
+    run('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'legacy feed')
+    original = rss.git
+    def local_git(*args, cwd=None):
+        return original(*(remote.as_uri() if arg == 'https://github.com/owner/feed.git' else arg for arg in args), cwd=cwd)
+    monkeypatch.setattr(rss, 'git', local_git)
+    monkeypatch.setenv('GITHUB_REPOSITORY', target)
+    monkeypatch.delenv('RSS_PAGES_DEPLOY_KEY', raising=False)
+    first = rss.publish(final('a'), target, tmp_path / 'first', URL)
+    assert first['changed'] is True and first['new_items'] == 0
+    second = rss.publish(final('a'), target, tmp_path / 'second', URL)
+    assert second['changed'] is False and second['new_items'] == 0
+    assert rss.read_feed((tmp_path / 'second/feed.xml').read_bytes()) == rss.read_feed(data)
+    assert set(run('ls-files').splitlines()) == {'feed.xml', 'feed.xsl', 'index.html'}
