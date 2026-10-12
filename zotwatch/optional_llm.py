@@ -94,7 +94,7 @@ class LocalConfig(StrictConfigModel):
     services: dict[str, LocalService] = Field(default_factory=dict)
     features: LocalFeatures = Field(default_factory=LocalFeatures)
     allow_private_context: bool = False
-    output_mode: Literal["english", "bilingual"] = "bilingual"
+    output_mode: Literal["english", "bilingual", "chinese"] = "bilingual"
     output_language: Literal["en", "zh-CN"] = "zh-CN"
 
     @model_validator(mode="after")
@@ -372,6 +372,8 @@ def refine_metadata(source, *, providers=None, now=None):
 
 
 def translate(config, papers, cache_path, *, mode="bilingual", client_factory=CompatibleClient):
+    if mode not in {"english", "bilingual", "chinese"}:
+        raise ValueError("unknown output mode")
     inputs = [dict(id=r["work_key"], title=r["title"], abstract=r.get("abstract") or "") for r in papers]
     if len({r["id"] for r in inputs}) != len(inputs):
         raise ValueError("duplicate paper identity")
@@ -520,10 +522,11 @@ def render_html(result):
         '<h1>P5C9 本地结果</h1><p>' + escape(json.dumps(result["metadata"], ensure_ascii=False)) + '</p>']
     if "papers" in result:
         for row in result["papers"]:
-            parts.append('<article><h2>' + escape(row["title_en"]) + '</h2>')
+            chinese = result["mode"] == "chinese"
+            parts.append('<article><h2>' + escape((row["title_zh"] or row["title_en"]) if chinese else row["title_en"]) + '</h2>')
             if result["mode"] == "bilingual" and row["title_zh"]:
                 parts.append('<h3>' + escape(row["title_zh"]) + '</h3>')
-            parts.append('<p>' + escape(row["abstract_en"]) + '</p>')
+            parts.append('<p>' + escape((row["abstract_zh"] or row["abstract_en"]) if chinese else row["abstract_en"]) + '</p>')
             if row.get("abstract_status") == "no_verified_abstract":
                 parts.append('<p>未取得可信摘要；仅显示标题，不以正文片段替代摘要。</p>')
             if result["mode"] == "bilingual" and row["abstract_zh"]:
@@ -569,7 +572,7 @@ def main(argv=None):
         command.add_argument("--cache", type=Path)
         command.add_argument("--env-file", type=Path, help="explicit local env file, never output its contents")
         if name == "translate":
-            command.add_argument("--mode", choices=("english", "bilingual"), default="bilingual")
+            command.add_argument("--mode", choices=("english", "bilingual", "chinese"), default="bilingual")
     args = parser.parse_args(argv)
     try:
         protected = ([args.result, args.diagnostic, args.metadata, args.generation, args.model]

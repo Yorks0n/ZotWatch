@@ -36,14 +36,15 @@ def integrate(config, source, final, cache_dir):
     sidecar = dict(schema_name='zotwatch-staging-rss-ai', schema_version=1,
         run_id=final['run_id'], source_final_sha256=sha256(json.dumps(final, ensure_ascii=False,
             sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest(),
-        retained_work_keys=[r['work_key'] for r in retained], papers=outputs)
+        retained_work_keys=[r['work_key'] for r in retained], papers=outputs, output_mode=config.output_mode)
     return sidecar, quality, translations
 
 
 def run(config_path, result_path, state, destination):
     destination, state = Path(destination), Path(state)
     config = LocalConfig.model_validate(_read_yaml(config_path)) if Path(config_path).is_file() else LocalConfig()
-    if not config.features.translation.enabled and (not config.features.shadow.enabled or config.features.shadow.provider == 'none'):
+    if (not config.features.translation.enabled and config.output_mode != 'english'
+        and (not config.features.shadow.enabled or config.features.shadow.provider == 'none')):
         return dict(status='disabled', requests=0, original_result_unchanged=True)
     final = read_json(result_path)
     if final.get('status') != 'succeeded' or final.get('command') != 'watch' or not final.get('recommendations'):

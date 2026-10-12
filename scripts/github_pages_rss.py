@@ -140,7 +140,9 @@ def load_final(source, run_id):
 def apply_delivery_sidecar(final, value):
     """Validate a closed public projection bound to this exact immutable result."""
     try:
-        if (set(value) != {"schema_name", "schema_version", "run_id", "source_final_sha256", "retained_work_keys", "papers"}
+        fields = {"schema_name", "schema_version", "run_id", "source_final_sha256", "retained_work_keys", "papers"}
+        if (set(value) not in (fields, fields | {"output_mode"})
+            or value.get("output_mode", "bilingual") not in ("english", "bilingual", "chinese")
             or value["schema_name"] != "zotwatch-staging-rss-ai" or value["schema_version"] != 1
             or value["run_id"] != final["run_id"]
             or value["source_final_sha256"] != hashlib.sha256(json.dumps(final, ensure_ascii=False,
@@ -160,7 +162,8 @@ def apply_delivery_sidecar(final, value):
                 or any(v is not None and (not isinstance(v, str) or len(v) > limit)
                        for v, limit in ((paper["title_zh"], 4000), (paper["abstract_zh"], 50000)))):
                 raise ValueError("Nonpublic or invalid delivery data")
-        return {**final, "recommendations": selected, "_staging_ai": {r["work_key"]: r for r in value["papers"]}}
+        return {**final, "recommendations": selected, "_staging_ai": {r["work_key"]: r for r in value["papers"]},
+                "_staging_output_mode": value.get("output_mode", "bilingual")}
     except (ValueError, TypeError, KeyError, AttributeError):
         return final
 
@@ -298,8 +301,14 @@ def description(abstract, journal, link):
             + escape(link) + "</a></p></div>")
 
 
-def delivery_description(paper, journal, link):
-    if not paper.get("abstract_zh"):
+def delivery_description(paper, journal, link, mode="bilingual"):
+    if mode == "chinese":
+        body = abstract_html(paper.get("abstract_zh") or paper["abstract_en"])
+        return ('<div class="zotwatch-rss-description-v5"><h3>摘要</h3><div>' + body
+            + '</div><p>期刊：' + escape(plain(journal) or "未提供")
+            + '</p><p>原文链接：<a href="' + escape(link, quote=True) + '">'
+            + escape(link) + '</a></p></div>')
+    if mode == "english" or not paper.get("abstract_zh"):
         return description(paper["abstract_en"], journal, link)
     return ('<div class="zotwatch-rss-description-v5"><h3>Abstract</h3><div>'
         + abstract_html(paper["abstract_en"]) + '</div><h3>摘要</h3><div>'
@@ -442,9 +451,15 @@ def merge_feed(final, old, feed_url, now=None, resolve=public_metadata):
         guid, link = identity(row)
         if guid in delivery:
             paper = delivery[guid]
-            rendered = dict(title=plain(row["title"]) + (" | " + plain(paper["title_zh"]) if paper.get("title_zh") else ""),
+            mode = final.get("_staging_output_mode", "bilingual")
+            title = plain(row["title"])
+            if mode == "chinese":
+                title = plain(paper.get("title_zh") or "") or title
+            elif mode == "bilingual" and paper.get("title_zh"):
+                title += " | " + plain(paper["title_zh"])
+            rendered = dict(title=title,
                 link=link, guid=guid, pubDate=items[guid]["pubDate"] if guid in items else stamp,
-                description=delivery_description(paper, venues[guid], link))
+                description=delivery_description(paper, venues[guid], link, mode))
             if guid in items:
                 if items[guid] != rendered:
                     items[guid] = rendered
