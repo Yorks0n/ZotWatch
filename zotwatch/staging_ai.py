@@ -40,7 +40,7 @@ def integrate(config, source, final, cache_dir):
     return sidecar, quality, translations
 
 
-def run(config_path, result_path, state, destination):
+def run(config_path, result_path, state, destination, encoder_cache=None):
     destination, state = Path(destination), Path(state)
     config = LocalConfig.model_validate(_read_yaml(config_path)) if Path(config_path).is_file() else LocalConfig()
     if (not config.features.translation.enabled and config.output_mode != 'english'
@@ -53,6 +53,13 @@ def run(config_path, result_path, state, destination):
     generation = state / 'latent-state-v1' / 'generations' / revision
     source = prepare(result_path, state / 'runs' / f"filter-diagnostic-{final['run_id']}.json",
         state / 'metadata-cache-v1.json', generation / 'generation.json', generation / 'model.json')
+    if config.features.shadow.enabled and config.features.shadow.provider != 'none' and config.allow_private_context:
+        from zotwatch.center_profiles import enrich, load_vectors, NAME
+        from zotwatch.interests.lifecycle import Generation
+        from zotwatch.interests.center_recall_contract import load_center_model
+        snapshot = Generation.model_validate(read_json(generation / 'generation.json'))
+        source = enrich(config, source, snapshot, load_center_model(generation / 'model.json'),
+            load_vectors(snapshot, generation), encoder_cache, state / NAME)
     sidecar, quality, translations = integrate(config, source, final, state / 'optional-ai-cache-v1')
     save_json(destination / SIDECAR, sidecar)
     save_json(destination / 'ai' / 'quality-filter.json', quality)
@@ -70,6 +77,7 @@ def main(argv=None):
     parser.add_argument('--result', required=True, type=Path)
     parser.add_argument('--state', required=True, type=Path)
     parser.add_argument('--destination', required=True, type=Path)
+    parser.add_argument("--encoder-cache", type=Path)
     args = parser.parse_args(argv)
     # Fresh operational destination: on any service/preparation error, omit optional
     # projection and let the unchanged publisher consume the original Top 20.
@@ -77,7 +85,7 @@ def main(argv=None):
     try:
         if target.exists():
             raise ValueError('stale projection')
-        summary = run(args.config, args.result, args.state, args.destination)
+        summary = run(args.config, args.result, args.state, args.destination, args.encoder_cache)
     except Exception:
         if target.exists():
             target.unlink()

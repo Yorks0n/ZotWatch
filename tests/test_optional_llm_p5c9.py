@@ -110,7 +110,7 @@ def test_shadow_sends_only_bounded_text_and_never_mutates_ranking(tmp_path):
     assert PAPERS == before
     model, payload = FakeClient.calls[0]
     assert model == "judge-model"
-    assert set(payload[0]) == {"id", "title", "abstract", "abstract_truncated", "representatives"}
+    assert set(payload[0]) == {"id", "title", "abstract", "abstract_truncated", "representatives", "journal"}
     assert payload[0]["id"] == "p1"
     assert "doi:" not in json.dumps(payload)
     assert len(payload[0]["representatives"][0]["abstract"]) == 900

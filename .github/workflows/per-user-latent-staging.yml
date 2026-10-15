@@ -349,8 +349,16 @@ jobs:
           key: zotwatch-quality-${{ github.repository_id }}-v1-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: zotwatch-quality-${{ github.repository_id }}-v1-
 
-      - name: Apply optional staging AI delivery after original Top 20
+      - name: Restore durable private interest portraits
+        id: portraits
         if: inputs.mode == 'run' && steps.result.outputs.status == 'succeeded'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python -m zotwatch.profile_transport restore --state "$RUNNER_TEMP/zotwatch-state"
+
+      - name: Apply optional staging AI delivery after original Top 20
+        if: inputs.mode == 'run' && steps.result.outputs.status == 'succeeded' && steps.portraits.outcome == 'success'
         env:
           LLM_API_FORMAT: ${{ vars.LLM_API_FORMAT || 'openai' }}
           LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
@@ -369,6 +377,16 @@ jobs:
           --result "$RUNNER_TEMP/machine-result.json"
           --state "$RUNNER_TEMP/zotwatch-state"
           --destination "$RUNNER_TEMP/zotwatch-operational"
+          --encoder-cache "$RUNNER_TEMP/zotwatch-encoder/hub"
+
+      - name: Persist private interest portraits with remote CAS
+        if: inputs.mode == 'run' && steps.portraits.outcome == 'success'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [[ -f "$RUNNER_TEMP/zotwatch-state/center-profiles-v1.json" ]]; then
+            python -m zotwatch.profile_transport publish --state "$RUNNER_TEMP/zotwatch-state"
+          fi
 
       - name: Select authoritative result
         id: aggregate
