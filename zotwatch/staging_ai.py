@@ -8,7 +8,7 @@ from pathlib import Path
 
 from zotwatch.config.loader import _read_yaml
 from zotwatch.abstract_quality import verified_abstract
-from zotwatch.optional_llm import LocalConfig, prepare, read_json, save_json, shadow, translate
+from zotwatch.optional_llm import LLMError, LocalConfig, prepare, read_json, save_json, shadow, translate
 
 SIDECAR = 'rss-ai-v1.json'
 
@@ -86,10 +86,16 @@ def main(argv=None):
         if target.exists():
             raise ValueError('stale projection')
         summary = run(args.config, args.result, args.state, args.destination, args.encoder_cache)
-    except Exception:
+    except Exception as exc:
         if target.exists():
             target.unlink()
-        summary = dict(status='fallback', reason='OPTIONAL_AI_UNAVAILABLE', original_result_unchanged=True)
+        # Only fixed codes cross the log boundary; never exception text or private input.
+        codes = {'api_unavailable', 'api_http_error', 'output_budget_exceeded', 'invalid_response',
+                 'input_budget_exceeded', 'portrait_identity_mismatch', 'missing_key',
+                 'portrait_llm_not_configured', 'insufficient_center_representatives',
+                 'candidate_abstract_required_for_neighbors'}
+        reason = str(exc) if isinstance(exc, LLMError) and str(exc) in codes else 'OPTIONAL_AI_UNAVAILABLE'
+        summary = dict(status='fallback', reason=reason, original_result_unchanged=True)
     print(json.dumps(summary, ensure_ascii=False))
     return 0
 

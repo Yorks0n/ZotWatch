@@ -112,7 +112,13 @@ def enrich(config, source, generation, model, vectors, encoder_cache, cache_path
         if client is None:
             client = client_factory(profile_service(config), FeatureBudgetConfig(max_items=60,
                 max_requests=1, max_input_tokens=100000, max_output_tokens=2000, timeout_seconds=120))
-        result = client.complete(PROMPT, [dict(id='center', representatives=representatives)])
+        payload = [dict(id='center', representatives=representatives)]
+        try:
+            result = client.complete(PROMPT, payload)
+        except LLMError as exc:
+            if str(exc) not in {'api_unavailable', 'api_http_error', 'output_budget_exceeded', 'invalid_response'}:
+                raise
+            result = client.complete(PROMPT, payload)
         if len(result) != 1:
             raise LLMError('portrait_identity_mismatch')
         portrait = Portrait.model_validate(result[0])
