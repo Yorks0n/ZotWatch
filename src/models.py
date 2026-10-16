@@ -71,6 +71,8 @@ class CandidateWork(BaseModel):
     url: Optional[str] = None
     published: Optional[datetime] = None
     venue: Optional[str] = None
+    # Excluded from the legacy dump shape; E5 projectors/cache transport it explicitly.
+    is_preprint: Optional[bool] = Field(default=None, exclude=True)
     metrics: Dict[str, float] = Field(default_factory=dict)
     extra: Dict[str, object] = Field(default_factory=dict)
 
@@ -88,6 +90,8 @@ class RankedWork(CandidateWork):
     similarity: float
     recency_score: float
     metric_score: float
+    # Additive provenance for E5; exclusion preserves the frozen E0 RankedWork shape.
+    altmetric_score: float = Field(default=0.0, exclude=True)
     author_bonus: float
     venue_bonus: float
     journal_quality: float = 1.0
@@ -100,6 +104,9 @@ class ProfileArtifacts:
     sqlite_path: str
     faiss_path: str
     profile_json_path: str
+    manifest_path: str = ""
+    embeddings_path: str = ""
+    generation_id: str = ""
 
 
 def iter_batches(items: Sequence, batch_size: int) -> Iterable[Sequence]:

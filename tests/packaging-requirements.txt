@@ -1,0 +1,5 @@
+# Build/installation verification tools, separate from the frozen E0 environment.
+build==1.2.2.post1
+setuptools==77.0.3
+wheel==0.45.1
+pyproject_hooks==1.2.0

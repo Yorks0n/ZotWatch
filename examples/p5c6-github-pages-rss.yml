@@ -1,0 +1,62 @@
+# Install independently in the PRIVATE workspace as .github/workflows/p5c6-rss.yml.
+# Copy scripts/github_pages_rss.py there; never change the recommendation caller.
+# Publishes feed.xml/feed.xsl/index.html and records the public URL in zotwatch-rss.json.
+# RSS_PAGES_REPOSITORY defaults to this workspace if its plan supports Pages.
+# Otherwise set it to the public RSS-only repo and store its write deploy key
+# as RSS_PAGES_DEPLOY_KEY. Configure Pages to gh-pages / (root) once.
+name: ZotWatch GitHub Pages RSS
+on:
+  workflow_run:
+    workflows: [ZotWatch per-user staging]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      source-run-id:
+        description: Existing successful recommendation Actions run ID
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: zotwatch-github-pages-rss
+  cancel-in-progress: false
+jobs:
+  rss:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == github.event.repository.default_branch)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.11'
+      - name: Merge and publish public RSS only
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          RSS_PAGES_DEPLOY_KEY: ${{ secrets.RSS_PAGES_DEPLOY_KEY }}
+          TARGET: ${{ vars.RSS_PAGES_REPOSITORY || github.repository }}
+          SOURCE_RUN_ID: ${{ inputs.source-run-id || github.event.workflow_run.id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/github_pages_rss.py --run-id "$SOURCE_RUN_ID" --target "$TARGET" --destination "$RUNNER_TEMP/rss-pages-first" > "$RUNNER_TEMP/rss-first.json"
+          cat "$RUNNER_TEMP/rss-first.json"
+          # Repeat the same publication in this one run: it must make no push.
+          python scripts/github_pages_rss.py --run-id "$SOURCE_RUN_ID" --target "$TARGET" --destination "$RUNNER_TEMP/rss-pages-repeat" > "$RUNNER_TEMP/rss-repeat.json"
+          python - "$RUNNER_TEMP/rss-repeat.json" <<'PY'
+          import json, sys
+          value = json.load(open(sys.argv[1]))
+          assert value['changed'] is False and value['new_items'] == 0
+          print(json.dumps({'repeat_publication': value, 'idempotent': True}))
+          PY
+          {
+            echo 'RSS-only publication'
+            cat "$RUNNER_TEMP/rss-first.json" "$RUNNER_TEMP/rss-repeat.json"
+          } >> "$GITHUB_STEP_SUMMARY"

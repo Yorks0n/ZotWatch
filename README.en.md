@@ -1,97 +1,104 @@
-# ZotWatcher
+# ZotWatch
 
-ZotWatcher is a workflow that builds a personal interest profile from Zotero data and continuously monitors academic sources for newly published literature recommendations. It runs daily on GitHub Actions, generates RSS/HTML reports for the latest candidate papers, and can also be executed manually on a local machine when needed.
+**Turn your Zotero library into a starting point for paper discovery.**
 
-## Overview
-- **Zotero sync**: Fetches library items through the Zotero Web API and incrementally updates the local profile.
-- **Profile building**: Vectorizes library items, extracts high-frequency authors and journals, and tracks recently active journals.
-- **Candidate collection**: Pulls data from sources such as Crossref, arXiv, and optionally bioRxiv/medRxiv, while also performing targeted retrieval for high-interest journals.
-- **Deduplication and scoring**: Produces ranked recommendations by combining semantic similarity, time decay, citation/Altmetric signals, SJR journal metrics, and whitelist boosts.
-- **Publishing outputs**: Generates `reports/feed.xml` for RSS subscription, publishes it through GitHub Pages, and can also generate HTML reports or push results back to Zotero.
+ZotWatch builds personal interest centers from your saved papers, retrieves new literature, and delivers recommendations through a reading page and RSS. Computation runs in your own private GitHub workspace; a separate public repository hosts publishable results.
 
-## Quick Start
-1. Sign in to GitHub and open the repository page: [ZotWatch](https://github.com/Yorks0n/ZotWatch)
+[Get started](https://zotwatch.yorks0n.com/) · [中文](README.md) · [Development notes](docs/V2_DEVELOPMENT.md)
 
-2. Click the **Fork** button at the top to create your own copy under your GitHub account: **Fork - Create fork**
+## What is new
 
-3. In your forked ZotWatch repository, open **Settings**. In the left sidebar, expand **Secrets and variables** and click **Action**.
-   ![image1](images/image1.png)
+- **Automatic interest modeling:** sync Zotero, build a model for each user, retain versioned state, and rebuild when update conditions are met.
+- **Daily recommendations:** retrieve papers related to interest centers and apply date and deduplication rules to select up to 20 papers.
+- **Optional AI:** enable title/abstract translation and LLM or Jev judgment independently. Basic recommendations need no AI key; AI is off by default for new users.
+- **Specific judgment context:** with private-context consent, create versioned interest portraits and retrieve similar historical papers for each candidate. Portraits remain in the private workspace.
+- **Reading page and RSS:** publish English or bilingual paper content without exposing interest portraits, library history, or private judgment explanations.
+- **Independent execution:** the website manages accounts and configuration; configured GitHub Actions schedules continue without the website being online.
 
-4. Click the **New repository secret** button on the right and add the required repository secrets.
-   ![image2](images/image2.png)
+## Get started
 
-5. Add the following key-value pairs:
+1. Open [ZotWatch](https://zotwatch.yorks0n.com/) and sign in with GitHub.
+2. Follow the GitHub app installation and authorization steps, then create a workspace.
+3. Connect Zotero and authorize read access to your library.
+4. Wait for the initial sync, model construction, and recommendation run. Initial runs usually take longer than incremental runs.
+5. Open your results and subscribe to your generated RSS URL in Zotero or another reader.
 
-   - `ZOTERO_API_KEY`: Required to access your Zotero library data. Log in to your Zotero account at the [account settings page](https://www.zotero.org/settings/), then go to **Settings - Security - Applications** and click **Create new private key**. Enable **Allow library access** for Personal Library, set **Default Group Permissions** to **Read Only**, and save to get the API key.
-   - `ZOTERO_USER_ID`: This ID can be found on the line below the **Create new private key** button in **Settings - Security - Applications**, which reads `User ID: Your user ID for use in API calls is ******`.
-   - `OPENALEX_MAILTO`: An email address used as a polite identifier for some API requests.
-   - `CROSSREF_MAILTO`: An email address used as a polite identifier for some API requests.
-     ![image3](images/image3.png)
+Setup uses a **private computation repository and a separate public results repository**. You do not need to fork this engine or deploy the public harvesting service.
 
-6. Return to your repository homepage, click **Settings**, then select **Pages** from the left sidebar. Set **Source** to **GitHub Actions** so the generated RSS page can be published directly through GitHub Pages.
+Use the website to configure the daily schedule and optional AI connections. Translation and judgment are independent; Jev judgment still needs an available LLM connection for interest portrait generation. Subscribe to the URL returned for your own workspace, not a developer test feed.
 
-   ![image4](images/image4.png)
+## Recommendation and privacy boundaries
 
-7. Next, click the **Actions** tab at the top and make sure GitHub Actions is enabled.
-   ![image5](images/image5.png)
+Optional AI runs after the original recommendation list. Judgment failures retain that list; translation failures retain English text. Failures are not presented as quality judgments.
 
-8. Click **Daily Watch & RSS** on the left. By default, workflows in a forked repository are disabled, so click **Enable workflow** on the right to activate it.
-   ![image6](images/image6.png)
+An insufficient library, lack of qualified interest centers, sparse candidates, or unavailable sources can result in a not-ready state, fewer recommendations, or no results. The engine does not silently relax its model requirements to fill the list. Abstract-based judgment is not a substitute for reading a paper.
 
-9. The repository should then run automatically every day at 6:00 AM. To run it immediately, click **Run workflow**. The first run performs a full vector database build, so it may take some time. You can check the status under **All workflows**.
+When private-context AI is enabled, the selected service receives bounded historical paper excerpts or interest descriptions. These are excluded from public RSS. See [interest portraits](docs/CENTER_PORTRAITS_V1.md) and [optional AI](docs/P5C9_LOCAL_USAGE.md) for details.
 
-   ![image7](images/image7.png)
+## Components
 
-10. After the workflow finishes, go to **Settings - Pages** to find your site URL. Opening that URL directly will not show the RSS feed. Copy the URL and append `/feed.xml` to the end, for example: `https://[username].github.io/ZotWatch/feed.xml`. This URL can be imported into Zotero RSS subscriptions or any RSS reader you prefer.
-    ![image8](images/image8.png)
+| Component | Responsibility |
+| --- | --- |
+| [ZotWatch](https://github.com/Yorks0n/ZotWatch), this repository | Python engine, model lifecycle, contracts, reusable workflows, RSS publisher |
+| [zotwatch-web](https://github.com/Yorks0n/zotwatch-web) | Web frontend and Cloudflare Worker for authorization, setup, configuration, and run management; private source |
+| [zotwatch-workspace-template](https://github.com/Yorks0n/zotwatch-workspace-template) | Versioned workspace templates; private source |
+| [zotwatch-public-harvester](https://github.com/Yorks0n/zotwatch-public-harvester) | Public literature metadata collection, deduplication, storage, and APIs |
+| Each user's private workspace | Configuration, credentials, scheduled execution, and private state |
+| Each user's public results repository | Paper reading page and RSS |
 
-11. The upstream repository of this project is regularly updated to fix bugs and optimize performance. Therefore, if you see an update notification, you can click **Update branch** at the top to update to the latest version.
-   ![image-20260306112507934](images//image-20260306112507934.png)
+The website configures the private workspace. That workspace runs the engine against Zotero and the public candidate API, then sends only approved output to the public results repository.
 
-## Run Locally
-1. **Clone the repository and prepare the environment**
-   ```bash
-   git clone <your-repo-url>
-   cd ZotWatcher
-   mamba env create -n ZotWatcher --file requirements.txt  # or install with pip
-   conda activate ZotWatcher
-   ```
+## Local development
 
-2. **Configure environment variables**
-   Create a `.env` file in the repository root, or use GitHub Secrets. At minimum, include:
-   - `ZOTERO_API_KEY`: Zotero Web API access key
-   - `ZOTERO_USER_ID`: Zotero user ID (numeric)
-   Optional:
-   - `ALTMETRIC_KEY`: Used to fetch Altmetric data
-   - `OPENALEX_MAILTO` / `CROSSREF_MAILTO`: Override the default contact email for monitoring requests
+Python 3.11+ is required. Install from the checked-out source; this does not imply a stable PyPI release:
 
-3. **Run locally**
-   ```bash
-   # Initial full profile build
-   python -m src.cli profile --full
-
-   # Daily watch run (generate RSS + HTML)
-   python -m src.cli watch --rss --report --top 20
-   ```
-
-## Project Structure
-```text
-├─ src/                   # Main workflow modules
-├─ config/                # YAML configuration, including APIs and scoring weights
-├─ data/                  # Profile/cache/metric files (not version controlled)
-├─ reports/               # Generated RSS/HTML outputs
-└─ .github/workflows/     # GitHub Actions configuration
+```sh
+git clone https://github.com/Yorks0n/ZotWatch.git
+cd ZotWatch
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[latent]'
+zotwatch --help
 ```
 
-## Custom Configuration
-- `config/zotero.yaml`: Zotero API settings (`user_id` may be written as `${ZOTERO_USER_ID}` and injected through `.env` or GitHub Secrets).
-- `config/sources.yaml`: Data source toggles, categories, and time windows (default: 7 days).
-- `config/scoring.yaml`: Weights for similarity, journal quality, and related factors, with support for manual whitelists.
+Keep personal configuration, credentials, and state in a separate workspace. Validate an existing `zotwatch.yaml` offline:
 
-## FAQ
-- **Cache is stale**: Candidate lists are cached for 12 hours by default. Delete `data/cache/candidate_cache.json` to force a refresh.
-- **No targeted retrieval for active journals**: Make sure `profile --full` has been run so that `data/profile.json` is generated.
-- **No recommendations returned**: Check whether all candidates fall outside the 7-day window, or whether the preprint ratio limit is too strict. You can adjust `--top`, the day threshold in `_filter_recent`, or `max_ratio`.
+```sh
+zotwatch config validate --workspace /path/to/private-workspace
+```
+
+Validation does not establish credential, model-cache, or service readiness. Automatic recommendations require a private repository identity and a pinned encoder, among other runtime inputs. Prefer the website-provisioned workflow; legacy `watch --rss` flags are not interchangeable with `latent-auto-v1` configuration.
+
+See [local optional AI usage](docs/P5C9_LOCAL_USAGE.md), the [disabled-by-default example](examples/optional-llm.yaml), and the [legacy fork/local guide](docs/legacy-usage.en.md).
+
+### Tests and builds
+
+```sh
+python -m pip install -r tests/requirements-latent.txt -r tests/packaging-requirements.txt
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m pytest -c tests/pytest.ini -q
+python -m build --no-isolation
+```
+
+Offline tests use synthetic data. Installation tests require dedicated wheel/editable environments supplied by packaging CI. Local validation does not establish production end-to-end acceptance.
+
+## Versions and upgrades
+
+This branch consolidates ZotWatch 2.x development. The Python package remains `2.0.0.dev1`. Website deployments have been recorded, but consolidating source does not itself publish a stable release or migrate existing users.
+
+Personal callers pin full engine commit SHAs. Supported-engine contracts, setup templates, and publisher scripts must be upgraded together. Historical `P5C*` documents and workflow names containing `staging` are retained for traceability. See [development notes](docs/V2_DEVELOPMENT.md) for scope and validation.
+
+## Layout
+
+```text
+zotwatch/           CLI, configuration, contracts, interests, optional AI
+src/                Sync, embeddings, candidates, ranking, legacy compatibility
+scripts/            RSS publishing, diagnostics, development tools
+.github/workflows/  Reusable workflows and CI
+examples/           Version-specific caller and configuration examples
+tests/              Offline, contract, installation, and workflow tests
+docs/               Contracts, feature guides, historical acceptance records
+```
 
 ## License
-This project is licensed under the [MIT License](LICENSE).
+
+[MIT](LICENSE)

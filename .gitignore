@@ -10,6 +10,16 @@ __pycache__/
 /data/*.sqlite
 /data/*.index
 /data/profile.json
+/data/computational/
+/data/latent/
+# Private evaluation reports include library titles and item keys.
+/docs/P5B3_CLUSTERING_BENCHMARK.md
+/docs/P5B3_MEMBERSHIP_QUALIFICATION.md
+/docs/P5B3_EMBEDDING_MODEL_BENCHMARK.md
+/docs/P5B3_QUALITY_ACCEPTANCE.md
+/docs/P5B4_CENTER_SUPPORTED_RECALL.md
+/docs/P5B4_QUALITY_ACCEPTANCE.md
+/data/.zotwatch-state.lock
 /data/cache/
 /data/cache/*
 
@@ -25,3 +35,28 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Python build outputs
+/build/
+/dist/
+/*.egg-info/
+
+# P5C4 private per-user latent lifecycle
+/data/latent-state-v1/
+/data/latent-remote-v1.json
+
+# P5C8 private DOI metadata cache and remote restore authority
+/data/metadata-cache-v1.json
+/data/metadata-remote-v1.json
+
+# P5C9 local private input/context, cache, results, and quality-review report
+/data/optional-llm/
+/reports/optional-llm/
+/docs/P5C9A_B_LOCAL_REPORT.md
+/docs/P5C9A_B_LOCAL_REFINEMENT.md
+/docs/P5C9B_JEV_LOCAL_REPORT.md
+
+# Private interest portraits and optional AI runtime cache
+/data/center-profiles-v1.json
+/data/center-profiles-remote-v1.json
+/data/optional-ai-cache-v1/

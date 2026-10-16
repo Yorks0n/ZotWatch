@@ -1,0 +1,151 @@
+{
+  "$defs": {
+    "Projection": {
+      "additionalProperties": false,
+      "properties": {
+        "generator_version": {
+          "const": "bounded-keywords-v1",
+          "title": "Generator Version",
+          "type": "string"
+        },
+        "sampled_items": {
+          "maximum": 5000,
+          "minimum": 0,
+          "title": "Sampled Items",
+          "type": "integer"
+        },
+        "suggestions": {
+          "items": {
+            "$ref": "#/$defs/Suggestion"
+          },
+          "maxItems": 12,
+          "title": "Suggestions",
+          "type": "array"
+        },
+        "truncated": {
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "generator_version",
+        "sampled_items",
+        "truncated",
+        "suggestions"
+      ],
+      "title": "Projection",
+      "type": "object"
+    },
+    "Suggestion": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Description",
+          "type": "string"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "minItems": 1,
+          "title": "Keywords",
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "source_types": {
+          "items": {
+            "enum": [
+              "tag",
+              "text_keyword"
+            ],
+            "type": "string"
+          },
+          "maxItems": 2,
+          "minItems": 1,
+          "title": "Source Types",
+          "type": "array"
+        },
+        "supporting_items": {
+          "maximum": 5000,
+          "minimum": 2,
+          "title": "Supporting Items",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "source_types",
+        "supporting_items",
+        "keywords"
+      ],
+      "title": "Suggestion",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "caller_run_attempt": {
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "title": "Caller Run Attempt",
+      "type": "integer"
+    },
+    "caller_run_id": {
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "title": "Caller Run Id",
+      "type": "integer"
+    },
+    "engine_run_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Engine Run Id",
+      "type": "string"
+    },
+    "engine_sha": {
+      "pattern": "^[0-9a-f]{40}$",
+      "title": "Engine Sha",
+      "type": "string"
+    },
+    "projection": {
+      "$ref": "#/$defs/Projection"
+    },
+    "schema_name": {
+      "const": "zotwatch-interest-suggestions",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "workspace_repository_id": {
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991,
+      "title": "Workspace Repository Id",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_name",
+    "schema_version",
+    "engine_sha",
+    "workspace_repository_id",
+    "caller_run_id",
+    "caller_run_attempt",
+    "engine_run_id",
+    "projection"
+  ],
+  "title": "Summary",
+  "type": "object"
+}

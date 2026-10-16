@@ -1,0 +1,20 @@
+name: ZotWatch per-user staging
+on:
+  schedule:
+    - cron: '23 15 * * *' # Daily 23:23 Asia/Shanghai
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  lifecycle:
+    uses: Yorks0n/ZotWatch/.github/workflows/per-user-latent-staging.yml@9f20e94c33347a11713fdfc08cba1774333d9497
+    with:
+      config-path: zotwatch.yaml
+      mode: run
+      candidate-policy: center-recall-v1
+    secrets:
+      ZOTERO_USER_ID: ${{ secrets.ZOTERO_USER_ID }}
+      ZOTERO_API_KEY: ${{ secrets.ZOTERO_API_KEY }}
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}

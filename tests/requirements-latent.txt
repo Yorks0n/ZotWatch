@@ -1,0 +1,4 @@
+# P5B3 optional evaluation runtime; ordinary E0/P5B tests retain their sealed dependencies.
+-r requirements.txt
+hdbscan==0.8.40
+scikit-learn==1.6.1

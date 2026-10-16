@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zotwatch.dev/contracts/run-manifest-v1.schema.json",
+  "title": "ZotWatch Private Run Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "run_id", "command", "status", "exit_code", "generated_at", "config_schema_version", "config_fingerprint_sha256", "state_generation_id", "output_generation_id", "stages", "artifacts", "error"],
+  "properties": {
+    "schema_name": {"const": "zotwatch-run-manifest"},
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "command": {"enum": ["profile", "watch"]},
+    "status": {"enum": ["succeeded", "degraded", "failed"]},
+    "exit_code": {"enum": [0, 2, 3, 4, 5]},
+    "generated_at": {"type": "string"},
+    "config_schema_version": {"type": ["integer", "null"]},
+    "config_fingerprint_sha256": {"type": ["string", "null"]},
+    "state_generation_id": {"type": ["string", "null"]},
+    "output_generation_id": {"type": ["string", "null"]},
+    "stages": {"type": "array", "items": {"type": "object"}},
+    "artifacts": {"type": "array", "items": {"type": "object"}},
+    "error": {"type": ["object", "null"]}
+  }
+}

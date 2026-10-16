@@ -6,8 +6,22 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
+from zotwatch.paths import RuntimePaths
+from zotwatch.resources import journal_metrics_path
 
+from . import build_profile as build_profile_module
 from .build_profile import ProfileBuilder
+from .computational_state import (
+    ComputationalStateError,
+    StateCoordinator,
+    StateFutureSchemaError,
+    StateHandle,
+    StateLease,
+    StateManager,
+    descriptor_for_vectorizer,
+    expectation_from_snapshot,
+    pseudonymous_library_identity,
+)
 from .dedupe import DedupeEngine
 from .fetch_new import CandidateFetcher
 from .ingest_zotero_api import ZoteroIngestor
@@ -20,16 +34,187 @@ from .settings import Settings, load_settings
 from .storage import ProfileStorage
 from .report_html import render_html
 
-load_dotenv()  # Load default .env if present
-BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_SQLITE = BASE_DIR / "data" / "profile.sqlite"
-RSS_PATH = BASE_DIR / "reports" / "feed.xml"
 
+def run_profile_recorded(
+    base_dir: Path,
+    settings: Settings,
+    storage: ProfileStorage,
+    *,
+    full: bool,
+    state_dir: Path,
+    recorder,
+):
+    state_root = Path(state_dir)
+    coordinator = StateCoordinator(state_root)
+    manager = StateManager(state_root, coordinator=coordinator)
+    vectorizer = build_profile_module.TextVectorizer()
+    with coordinator.acquire() as lease:
+        try:
+            recorder.start("zotero_sync")
+            ZoteroIngestor(storage, settings).run(
+                full=full, library_identity_sha256=_library_identity(settings), lease=lease
+            )
+            recorder.finish("zotero_sync")
+        except Exception:
+            recorder.fail("zotero_sync", "ZOTERO_SYNC_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="ZOTERO_SYNC_FAILED")
+        try:
+            recorder.start("computational_state")
+            handle, _ = _ensure_computational_state(
+                base_dir, settings, storage, state_root=state_root, manager=manager,
+                vectorizer=vectorizer, lease=lease, force=full,
+            )
+            recorder.finish("computational_state")
+        except Exception:
+            recorder.fail("computational_state", "STATE_BUILD_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="STATE_BUILD_FAILED")
+    return recorder.finalize(
+        status="succeeded", exit_code=0, state_generation_id=handle.generation_id
+    )
+
+
+def run_watch_recorded(
+    base_dir: Path,
+    settings: Settings,
+    storage: ProfileStorage,
+    *,
+    state_dir: Path,
+    reports_dir: Path,
+    output_formats: tuple[str, ...],
+    top: int,
+    max_preprint_ratio: float,
+    journal_metrics: str,
+    strict: bool,
+    recorder,
+):
+    from zotwatch.results.projector import project_recommendations
+    from zotwatch.results.publication import OutputPublisher, PublicationError
+
+    state_root = Path(state_dir)
+    coordinator = StateCoordinator(state_root)
+    manager = StateManager(state_root, coordinator=coordinator)
+    vectorizer = build_profile_module.TextVectorizer()
+    with coordinator.acquire() as lease:
+        try:
+            recorder.start("zotero_sync")
+            ZoteroIngestor(storage, settings).run(
+                full=False, library_identity_sha256=_library_identity(settings), lease=lease
+            )
+            recorder.finish("zotero_sync")
+        except Exception:
+            recorder.fail("zotero_sync", "ZOTERO_SYNC_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="ZOTERO_SYNC_FAILED")
+        try:
+            recorder.start("computational_state")
+            state_handle, _ = _ensure_computational_state(
+                base_dir, settings, storage, state_root=state_root, manager=manager,
+                vectorizer=vectorizer, lease=lease, force=False,
+            )
+            recorder.finish("computational_state")
+        except Exception:
+            recorder.fail("computational_state", "STATE_BUILD_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="STATE_BUILD_FAILED")
+        try:
+            recorder.start("candidate_fetch")
+            outcome = CandidateFetcher(
+                settings, base_dir, profile_summary=state_handle.profile, state_dir=state_root
+            ).fetch_with_outcome()
+            if outcome.status == "failed":
+                recorder.fail("candidate_fetch", "CANDIDATE_UNAVAILABLE")
+                return recorder.finalize(
+                    status="failed", exit_code=4, error_code="CANDIDATE_UNAVAILABLE",
+                    state_generation_id=state_handle.generation_id,
+                )
+            degraded = outcome.status == "degraded"
+            if degraded:
+                code = "CANDIDATE_STALE_CACHE" if outcome.used_cache else "CANDIDATE_PARTIAL"
+                recorder.degrade("candidate_fetch", code, count=len(outcome.candidates))
+            else:
+                recorder.finish("candidate_fetch", count=len(outcome.candidates))
+        except Exception:
+            recorder.fail("candidate_fetch", "CANDIDATE_UNAVAILABLE")
+            return recorder.finalize(
+                status="failed", exit_code=4, error_code="CANDIDATE_UNAVAILABLE",
+                state_generation_id=state_handle.generation_id,
+            )
+        try:
+            recorder.start("dedupe")
+            filtered = DedupeEngine(storage).filter(outcome.candidates)
+            recorder.finish("dedupe", count=len(filtered))
+        except Exception:
+            recorder.fail("dedupe", "DEDUPE_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="DEDUPE_FAILED", state_generation_id=state_handle.generation_id)
+        try:
+            recorder.start("ranking")
+            with journal_metrics_path(journal_metrics, base_dir) as metrics_path:
+                options = {"state_dir": state_root, "state_handle": state_handle}
+                if metrics_path is not None:
+                    options["metrics_path"] = metrics_path
+                ranked = WorkRanker(base_dir, settings, vectorizer, **options).rank(filtered)
+            ranked = _filter_recent(ranked, days=7)
+            ranked = _limit_preprints(ranked, max_ratio=max_preprint_ratio)
+            if top and len(ranked) > top:
+                ranked = ranked[:top]
+            recorder.finish("ranking", count=len(ranked))
+        except Exception:
+            recorder.fail("ranking", "RANKING_FAILED")
+            return recorder.finalize(status="failed", exit_code=4, error_code="RANKING_FAILED", state_generation_id=state_handle.generation_id)
+
+    if degraded and strict:
+        return recorder.finalize(
+            status="degraded", exit_code=5, state_generation_id=state_handle.generation_id
+        )
+    recorder.start("output_render")
+    try:
+        recommendation = project_recommendations(
+            ranked, settings.scoring.weights, run_id=recorder.run_id,
+            generated_at=recorder.generated_at,
+        )
+    except Exception:
+        recorder.fail("output_render", "OUTPUT_CONTRACT_INVALID")
+        return recorder.finalize(
+            status="failed", exit_code=4, error_code="OUTPUT_CONTRACT_INVALID",
+            state_generation_id=state_handle.generation_id,
+        )
+    renderers = {}
+    if "json" in output_formats:
+        renderers["recommendations.json"] = lambda path: path.write_text(
+            recommendation.model_dump_json(indent=2) + "\n", encoding="utf-8"
+        )
+    if "rss" in output_formats:
+        renderers["feed.xml"] = lambda path: write_rss(ranked, path)
+    if "html" in output_formats:
+        renderers["report.html"] = lambda path: render_html(ranked, path)
+    recorder.finish("zotero_writeback")
+    try:
+        published = OutputPublisher(reports_dir).publish(recorder.run_id, renderers)
+        recorder.finish("output_render", count=len(published.artifacts))
+        recorder.start("output_publish")
+        recorder.finish("output_publish", count=len(published.artifacts))
+    except PublicationError as exc:
+        code = exc.code
+        stage = "output_publish" if code == "OUTPUT_PUBLISH_FAILED" else "output_render"
+        recorder.fail(stage, code)
+        return recorder.finalize(status="failed", exit_code=4, error_code=code, state_generation_id=state_handle.generation_id)
+    except Exception:
+        recorder.fail("output_publish", "OUTPUT_PUBLISH_FAILED")
+        return recorder.finalize(status="failed", exit_code=4, error_code="OUTPUT_PUBLISH_FAILED", state_generation_id=state_handle.generation_id)
+    return recorder.finalize(
+        status="degraded" if degraded else "succeeded", exit_code=0,
+        state_generation_id=state_handle.generation_id,
+        output_generation_id=published.generation_id,
+        artifacts=published.artifacts,
+    )
 
 def main(argv: Optional[list[str]] = None) -> None:
     parser = argparse.ArgumentParser(description="ZotWatcher CLI")
     parser.add_argument("command", choices=["profile", "watch"], help="Command to run")
-    parser.add_argument("--base-dir", default=str(BASE_DIR), help="Repository base directory")
+    parser.add_argument("--workspace", help="Personal workspace (default: current directory)")
+    parser.add_argument("--base-dir", help="Compatibility alias for --workspace")
+    parser.add_argument("--state-dir", help="State directory (default: workspace/data)")
+    parser.add_argument("--reports-dir", help="Reports directory (default: workspace/reports)")
+    parser.add_argument("--journal-metrics", default="legacy",
+                        help="legacy (default), bundled, or a workspace-relative/absolute CSV path")
     parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
     parser.add_argument("--full", action="store_true", help="Full rebuild (profile command)")
     parser.add_argument("--weekly", action="store_true", help="Alias for --full in profile command")
@@ -41,27 +226,63 @@ def main(argv: Optional[list[str]] = None) -> None:
     args = parser.parse_args(argv)
 
     setup_logging(verbose=args.verbose)
-    base_dir = Path(args.base_dir)
+    try:
+        paths = RuntimePaths.resolve(workspace=args.workspace, base_dir=args.base_dir,
+                                     state_dir=args.state_dir, reports_dir=args.reports_dir)
+    except ValueError as exc:
+        parser.error(str(exc))
+    base_dir = paths.workspace
     load_dotenv(base_dir / ".env")
     settings = load_settings(base_dir)
-    storage = ProfileStorage(base_dir / "data" / "profile.sqlite")
+    storage = ProfileStorage(paths.state / "profile.sqlite")
+    # Default calls keep the legacy API; overrides are explicit keyword arguments.
+    path_options = {"state_dir": paths.state} if args.state_dir is not None else {}
+    try:
+        if args.command == "profile":
+            run_profile(base_dir, settings, storage, full=args.full or args.weekly, **path_options)
+        elif args.command == "watch":
+            if args.reports_dir is not None:
+                path_options["reports_dir"] = paths.reports
+            if args.journal_metrics != "legacy":
+                path_options["journal_metrics"] = args.journal_metrics
+            run_watch(base_dir, settings, storage, rss=args.rss, report=args.report,
+                      top=args.top, push=args.push, **path_options)
+    finally:
+        storage.close()
 
-    if args.command == "profile":
-        run_profile(base_dir, settings, storage, full=args.full or args.weekly)
-    elif args.command == "watch":
-        run_watch(base_dir, settings, storage, rss=args.rss, report=args.report, top=args.top, push=args.push)
 
-
-def run_profile(base_dir: Path, settings: Settings, storage: ProfileStorage, *, full: bool) -> None:
-    ingest = ZoteroIngestor(storage, settings)
-    stats = ingest.run(full=full)
+def run_profile(base_dir: Path, settings: Settings, storage: ProfileStorage, *, full: bool,
+                state_dir: Path | None = None) -> None:
+    state_root = Path(state_dir) if state_dir is not None else storage.path.parent
+    coordinator = StateCoordinator(state_root)
+    manager = StateManager(state_root, coordinator=coordinator)
+    vectorizer = build_profile_module.TextVectorizer()
+    with coordinator.acquire() as lease:
+        ingest = ZoteroIngestor(storage, settings)
+        stats = ingest.run(
+            full=full,
+            library_identity_sha256=_library_identity(settings),
+            lease=lease,
+        )
+        logging.getLogger(__name__).info(
+            "Ingest stats: fetched=%s updated=%s removed=%s",
+            stats.fetched,
+            stats.updated,
+            stats.removed,
+        )
+        handle, artifacts = _ensure_computational_state(
+            base_dir,
+            settings,
+            storage,
+            state_root=state_root,
+            manager=manager,
+            vectorizer=vectorizer,
+            lease=lease,
+            force=full,
+        )
     logging.getLogger(__name__).info(
-        "Ingest stats: fetched=%s updated=%s removed=%s", stats.fetched, stats.updated, stats.removed
-    )
-    builder = ProfileBuilder(base_dir, storage, settings)
-    artifacts = builder.run()
-    logging.getLogger(__name__).info(
-        "Profile artifacts generated: sqlite=%s faiss=%s json=%s",
+        "Profile artifacts ready: generation=%s sqlite=%s faiss=%s json=%s",
+        handle.generation_id,
         artifacts.sqlite_path,
         artifacts.faiss_path,
         artifacts.profile_json_path,
@@ -77,18 +298,56 @@ def run_watch(
     report: bool,
     top: int,
     push: bool,
+    state_dir: Path | None = None,
+    reports_dir: Path | None = None,
+    journal_metrics: str = "legacy",
 ) -> None:
-    ingest = ZoteroIngestor(storage, settings)
-    ingest.run(full=False)
+    state_root = Path(state_dir) if state_dir is not None else storage.path.parent
+    coordinator = StateCoordinator(state_root)
+    manager = StateManager(state_root, coordinator=coordinator)
+    vectorizer = build_profile_module.TextVectorizer()
+    path_options = {"state_dir": state_root}
+    output_dir = Path(reports_dir) if reports_dir is not None else base_dir / "reports"
+    with coordinator.acquire() as lease:
+        ingest = ZoteroIngestor(storage, settings)
+        ingest.run(
+            full=False,
+            library_identity_sha256=_library_identity(settings),
+            lease=lease,
+        )
+        state_handle, _ = _ensure_computational_state(
+            base_dir,
+            settings,
+            storage,
+            state_root=state_root,
+            manager=manager,
+            vectorizer=vectorizer,
+            lease=lease,
+            force=False,
+        )
 
-    fetcher = CandidateFetcher(settings, base_dir)
-    candidates = fetcher.fetch_all()
+        fetcher = CandidateFetcher(
+            settings,
+            base_dir,
+            profile_summary=state_handle.profile,
+            **path_options,
+        )
+        candidates = fetcher.fetch_all()
+        dedupe = DedupeEngine(storage)
+        filtered = dedupe.filter(candidates)
 
-    dedupe = DedupeEngine(storage)
-    filtered = dedupe.filter(candidates)
-
-    ranker = WorkRanker(base_dir, settings)
-    ranked = ranker.rank(filtered)
+        with journal_metrics_path(journal_metrics, base_dir) as metrics_path:
+            ranker_options = dict(path_options)
+            if metrics_path is not None:
+                ranker_options["metrics_path"] = metrics_path
+            ranker = WorkRanker(
+                base_dir,
+                settings,
+                vectorizer,
+                state_handle=state_handle,
+                **ranker_options,
+            )
+        ranked = ranker.rank(filtered)
 
     ranked = _filter_recent(ranked, days=7)
     ranked = _limit_preprints(ranked, max_ratio=0.3)
@@ -99,22 +358,79 @@ def run_watch(
     if not ranked:
         logging.getLogger(__name__).info("No ranked results available")
         if rss:
-            write_rss([], base_dir / "reports" / "feed.xml")
+            write_rss([], output_dir / "feed.xml")
         if report:
-            render_html([], base_dir / "reports" / "report-empty.html")
+            render_html([], output_dir / "report-empty.html")
         return
 
     _log_top_results(ranked)
 
     if rss:
-        write_rss(ranked, base_dir / "reports" / "feed.xml")
+        write_rss(ranked, output_dir / "feed.xml")
     if report:
         report_name = "report.html"
         if ranked[0].published:
             report_name = f"report-{ranked[0].published:%Y%m%d}.html"
-        render_html(ranked, base_dir / "reports" / report_name)
+        render_html(ranked, output_dir / report_name)
     if push:
         ZoteroPusher(settings).push(ranked)
+
+
+def _library_identity(settings: Settings) -> str:
+    return pseudonymous_library_identity("user", settings.zotero.api.user_id)
+
+
+def _ensure_computational_state(
+    base_dir: Path,
+    settings: Settings,
+    storage: ProfileStorage,
+    *,
+    state_root: Path,
+    manager: StateManager,
+    vectorizer,
+    lease: StateLease,
+    force: bool,
+):
+    descriptor = descriptor_for_vectorizer(vectorizer)
+    snapshot = storage.read_profile_snapshot()
+    expectation = expectation_from_snapshot(snapshot, descriptor)
+    if not force:
+        try:
+            handle = manager.load_current(expectation)
+            return handle, _artifacts_from_handle(storage, handle)
+        except StateFutureSchemaError:
+            raise
+        except ComputationalStateError as exc:
+            logging.getLogger(__name__).info(
+                "Computational state requires rebuild: %s", exc
+            )
+
+    builder = ProfileBuilder(
+        base_dir,
+        storage,
+        settings,
+        vectorizer,
+        state_dir=state_root,
+        state_manager=manager,
+    )
+    artifacts = builder.run(lease=lease)
+    current_snapshot = storage.read_profile_snapshot()
+    current_expectation = expectation_from_snapshot(current_snapshot, descriptor)
+    handle = manager.load_current(current_expectation)
+    return handle, artifacts
+
+
+def _artifacts_from_handle(storage: ProfileStorage, handle: StateHandle):
+    from .models import ProfileArtifacts
+
+    return ProfileArtifacts(
+        sqlite_path=str(storage.path),
+        faiss_path=str(handle.index_path),
+        profile_json_path=str(handle.profile_path),
+        manifest_path=str(handle.manifest_path),
+        embeddings_path=str(handle.embeddings_path),
+        generation_id=handle.generation_id,
+    )
 
 
 def _log_top_results(ranked: list[RankedWork]) -> None:
@@ -123,11 +439,13 @@ def _log_top_results(ranked: list[RankedWork]) -> None:
         logger.info("%02d | %.3f | %s | %s", idx, work.score, work.label, work.title)
 
 
-def _filter_recent(ranked: list[RankedWork], *, days: int) -> list[RankedWork]:
+def _filter_recent(ranked: list[RankedWork], *, days: int, diagnostic=None) -> list[RankedWork]:
     if days <= 0:
         return ranked
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     kept = [work for work in ranked if work.published and work.published >= cutoff]
+    if diagnostic:
+        diagnostic(cutoff, ranked, kept)
     removed = len(ranked) - len(kept)
     if removed > 0:
         logging.getLogger(__name__).info("Dropped %d items older than %d days", removed, days)

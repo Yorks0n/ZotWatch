@@ -1,0 +1,154 @@
+> 历史使用说明：仅供旧版 Fork / 三 YAML 配置流程参考。新版入口见 [README](../README.md)。文中的 E1/E2 开发状态和部署记录是历史记录。
+
+# ZotWatcher
+
+> 当前开发状态（2026-10-09）：P5C9D 每日私有 staging 与新双语 RSS 已通过单次完整 E2E，判断默认 none、翻译默认开启。部署、配置和验收结果见 [P5C9D 报告](P5C9D_DAILY_WORKFLOW_RSS_DEPLOYMENT.md)。Production 保持不变；下文保留早期版本的使用说明。
+
+[English Version](../README.en.md)
+
+ZotWatcher 是一个基于 Zotero 数据构建个人兴趣画像，并持续监测学术信息源的新文献推荐流程。它每日在 GitHub Actions 上运行，将最新候选文章生成 RSS/HTML 报告，必要时也可在本地手动执行。
+
+## 功能概览
+- **Zotero 同步**：通过 Zotero Web API 获取文库条目，增量更新本地画像。
+- **画像构建**：对条目向量化，提取高频作者/期刊，并记录近期热门期刊。
+- **候选抓取**：优先通过统一的 Supabase Edge Functions 获取公共候选池，并对个人热门期刊做额外精准抓取。
+- **去重打分**：结合语义相似度、时间衰减、引用/Altmetric、SJR 期刊指标及白名单加分生成推荐列表。
+- **输出发布**：生成 `reports/feed.xml` 供 RSS 订阅，并通过 GitHub Pages 发布；同样可生成 HTML 报告或推送回 Zotero。
+
+## 快速开始
+
+### v2 开发版：安装后从独立 workspace 调用
+
+E1 提供 Python 3.11+ 可安装入口，继续使用下文原有三份 YAML 和 Zotero 凭据配置。以下安装命令在 ZotWatch checkout 内运行（不发布 PyPI 版本）：
+
+```sh
+python -m pip install .
+# 开发时可改用：python -m pip install -e .
+zotwatch --help
+zotwatch profile --workspace /path/to/personal-workspace --full
+zotwatch watch --workspace /path/to/personal-workspace --rss --report
+```
+
+个人 workspace 需要自己的 `config/zotero.yaml`、`config/sources.yaml`、`config/scoring.yaml`（可从本仓库原配置复制后编辑），凭据通过环境或该 workspace 的 `.env` 提供。包不会复制个人配置或下载模型到源码仓库。
+
+| 参数 | 默认 / 含义 |
+| --- | --- |
+| `--workspace` | 当前工作目录；旧 `--base-dir` 仍可使用，两者同时指定必须指向同一路径 |
+| `--state-dir` | workspace/data，保留 SQLite、FAISS、profile 与候选缓存原格式 |
+| `--reports-dir` | workspace/reports，保留原 RSS/HTML 文件名 |
+| `--journal-metrics` | 默认 legacy：仍读取 workspace/data/journal_metrics.csv，缺失处理不变；bundled 显式读取包内原版 CSV，也可指定 CSV 路径 |
+
+相对 state/reports/CSV 路径相对 workspace。旧 `python -m src.cli profile|watch ...` 保留，但默认 workspace 也改为当前目录；在源码目录外使用旧命令时请指明 `--base-dir`。只加载 workspace/.env，不自动搜索 engine 目录或父目录；已有环境变量优先。
+
+E1 不改变推荐算法、同步、缓存策略或默认 SJR 缺失行为。`--journal-metrics bundled` 是主动选用指标数据，可能使原本没有指标的 workspace 得到不同分数。原 1.x fork/Actions 使用方法继续如下。
+
+### E2 开发版：校验 `zotwatch.yaml`
+
+E2 增加严格的 v2 配置校验，但尚未把 v2 配置接入推荐执行。可在任意独立 workspace 离线验证：
+
+```sh
+zotwatch config validate --workspace /path/to/personal-workspace
+```
+
+普通 `zotwatch.yaml` 不含 API key、env/GitHub Secret 名、公共 Supabase key 或 engine ref。AI 默认关闭；没有任何 AI credential 的最小配置仍然合法。Preset 与两个明确的 Custom generation protocol 可通过 schema/语义校验，但 E2 没有网络 adapter；“配置合法”不表示 AI feature 当前可执行，普通 UI 也不应显示尚未实现的 provider。
+
+Custom 的 `connection_id` 仅允许 engine 分配的 `custom-1` 至 `custom-4`，并在 registry 内静态对应四个预声明 credential slots。普通 UI 不显示这些 ID，config 不能填写 slot/env/Secret 名，personal runner 也不依赖 Cloudflare/D1 mapping。Custom endpoint/key 不写入校验输出、报告或 artifact。
+
+E2 的 `zotwatch profile|watch` 仍只执行 legacy 三文件配置；v2-only workspace 会返回明确的 `CONFIG_V2_EXECUTION_DEFERRED`。兼容入口 `python -m src.cli` 及其 1.x 行为保持不变。公共候选池连接作为 engine-owned package resource 提供给 v2 配置边界，legacy/self-hosted endpoint/key override 继续只在旧 adapter 中生效。
+
+1. 登录GitHub后，打开仓库页面 [ZotWatch](https://github.com/Yorks0n/ZotWatch)
+
+2. 在顶部点击**Fork**按钮创建分支，将仓库复制到自己的GitHub账号下：**Fork - Create fork**
+
+3. 到fork后的ZotWatch页面，点击设置（**Settings**），在设置页面左侧找到**Secrets and variables**，展开并点击下级的**Action**。
+   ![image1](../images/image1.png)
+
+4. 点击右侧的**New repository secret**按钮，添加几个必要的Repository secrets
+   ![image2](../images/image2.png)
+
+5. 添加几个必要的键值对，包括：
+
+   - `ZOTERO_API_KEY`，此为获取 Zotero 数据库中现有个人信息所必须。登录 Zotero 网站的[个人账户](https://www.zotero.org/settings/)后，在 **Settings - Security - Applications** 处点击 **Create new private key**，其中 Personal Library 给予 Allow library access，Default Group Permissions 给予 Read Only 权限，保存获得 API。
+   - `ZOTERO_USER_ID`，该 ID 可从上述 **Settings - Security - Applications** 处 **Create new private key** 按钮下方一行 `User ID: Your user ID for use in API calls is ******` 获取。
+   - `CROSSREF_MAILTO`，邮箱地址，用于个人热门期刊补抓时的礼貌标注。
+   - `OPENALEX_MAILTO`，仅在关闭统一公共候选池、回退到直连 OpenAlex 时需要。
+     ![image3](../images/image3.png)
+
+6. 回到自己仓库首页，点击顶部**Settings**，在左侧找到**Pages**，在页面中为其**Source**选择**GitHub Actions**，使得生成的RSS页面直接发布到GitHub Pages。
+
+   ![image4](../images/image4.png)
+
+7. 接下来点击顶部的**Actions**栏目，并确认开启GitHub Actins
+   ![image5](../images/image5.png)
+
+8. 点击左侧**Daily Watch & RSS**，默认情况下fork来仓库的Workflow是关闭状态，点击右侧Enable workflow激活。
+   ![image6](../images/image6.png)
+
+9. 此时仓库理论上会在每天早上六点自动运行，要立刻运行请点击**Run workflow**。首次运行需要全量生成向量数据库，会比较慢，可以点击**All workflows**查看运行状态。
+
+   ![image7](../images/image7.png)
+
+10. 运行完后去 **Settings - Pages** 页面上可以看到自己的站点地址，此时直接访问此地址并不能打开，需要复制地址并在末尾加上`/feed.xml`，例如`https://[username].github.io/ZotWatch/feed.xml`，该地址可以导入 Zotero 的 RSS 订阅，或用于导入你喜欢的 RSS 阅读器。
+       ![image8](../images/image8.png)
+
+11. 本项目的上游仓库会定期更新以修复错误/优化性能，因此假如你看到有更新提示，可以点击顶部的**Update branch**来更新到最新版。
+
+![image-20260306112507934](../images//image-20260306112507934.png)
+
+
+
+## 本地运行
+1. **克隆仓库并准备环境**
+   ```bash
+   git clone <your-repo-url>
+   cd ZotWatcher
+   mamba env create -n ZotWatcher --file requirements.txt  # 或使用 pip 安装
+   conda activate ZotWatcher
+   ```
+
+2. **配置环境变量**
+   在仓库根目录创建 `.env` 或 GitHub Secrets，至少包含：
+   - `ZOTERO_API_KEY`：Zotero Web API 访问密钥
+   - `ZOTERO_USER_ID`：Zotero 用户 ID（数字）
+   可选：
+   - `SUPABASE_PUBLISHABLE_KEY`：仅供高级 legacy/self-hosted 配置覆盖公共候选池 key；普通 v2 用户不配置此 Secret
+   - `ALTMETRIC_KEY`：用于获取 Altmetric 数据
+   - `CROSSREF_MAILTO`：覆盖个人热门期刊补抓的联系邮箱
+   - `OPENALEX_MAILTO`：仅在关闭统一公共候选池、回退直连 OpenAlex 时使用
+
+3. **本地运行**
+   ```bash
+   # 首次全量画像构建
+   python -m src.cli profile --full
+
+   # 日常监测（生成 RSS + HTML）
+   python -m src.cli watch --rss --report --top 20
+   ```
+
+## 目录结构
+```
+├─ src/                   # 主流程模块
+├─ config/                # YAML 配置，含 API 及评分权重
+├─ data/                  # 画像/缓存/指标文件（不纳入版本控制）
+├─ reports/               # 生成的 RSS/HTML 输出
+└─ .github/workflows/     # GitHub Actions 配置
+```
+
+## 自定义配置
+- `config/zotero.yaml`：Zotero API 参数（`user_id` 可写 `$ {ZOTERO_USER_ID}`，将由 `.env`/Secrets 注入）。
+- `config/sources.yaml`：统一公共候选池 API、各数据源开关、分类、窗口大小（默认 7 天）。
+- `config/scoring.yaml`：相似度、期刊质量等权重；并提供手动白名单支持。
+
+## 常见问题
+- **缓存过旧**：候选列表默认缓存 12 小时，可删除 `data/cache/candidate_cache.json` 强制刷新。
+- **未找到热门期刊补抓**：确保已运行过 `profile --full` 生成 `data/profile.json`。
+- **推荐为空**：检查是否所有候选都超出 7 天窗口或预印本比例被限制；可调节 CLI 的 `--top`、`_filter_recent` 的天数或 `max_ratio`。
+
+## 本地可选 LLM 服务
+
+P5C9 的独立本地翻译与 LLM shadow 判断入口为 `python -m zotwatch.optional_llm`，
+默认关闭，配置和运行方法见 [本地使用说明](P5C9_LOCAL_USAGE.md)。
+
+## 许可证
+
+本项目采用 [MIT License](../LICENSE)。

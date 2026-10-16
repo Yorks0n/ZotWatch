@@ -1,0 +1,26 @@
+{
+  "centroid": [
+    0.7071067690849304,
+    0.7071067690849304,
+    0.0
+  ],
+  "generated_at": "2026-01-15T12:00:00+00:00",
+  "item_count": 2,
+  "model": "synthetic-e0-3d-v1",
+  "top_authors": [
+    {
+      "author": "Ada Example",
+      "count": 2
+    },
+    {
+      "author": "Bo Example",
+      "count": 1
+    }
+  ],
+  "top_venues": [
+    {
+      "count": 2,
+      "venue": "Example Journal"
+    }
+  ]
+}

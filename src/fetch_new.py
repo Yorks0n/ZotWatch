@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
 import json
 import html
 import re
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
@@ -16,24 +18,46 @@ from .http_utils import request_with_retry
 from .models import CandidateWork
 from .settings import Settings
 from .utils import ensure_isoformat, iso_to_datetime, utc_now
+from zotwatch.publication_dates import crossref_date, date_datetime
 
 logger = logging.getLogger(__name__)
 ARXIV_REQUEST_DELAY_SECONDS = 3.1
 ARXIV_MAX_RESULTS = 50
 
 
+@dataclass(frozen=True)
+class CandidateFetchOutcome:
+    candidates: List[CandidateWork]
+    status: str
+    used_cache: bool
+    request_complete: bool
+    failed_sources: int = 0
+
+
 class CandidateFetcher:
-    def __init__(self, settings: Settings, base_dir: Path):
+    def __init__(
+        self,
+        settings: Settings,
+        base_dir: Path,
+        *,
+        state_dir: Path | None = None,
+        profile_summary: dict | None = None,
+    ):
         self.settings = settings
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "ZotWatcher/0.1 (https://github.com/Yorks0n/ZotWatch)"})
         self.base_dir = Path(base_dir)
-        self.cache_path = self.base_dir / "data" / "cache" / "candidate_cache.json"
+        self.state_dir = Path(state_dir) if state_dir is not None else self.base_dir / "data"
+        self.cache_path = self.state_dir / "cache" / "candidate_cache.json"
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.profile_path = self.base_dir / "data" / "profile.json"
+        self.profile_path = self.state_dir / "profile.json"
+        self.profile_summary = profile_summary
         self.top_venues = self._load_top_venues()
 
     def fetch_all(self) -> List[CandidateWork]:
+        return self.fetch_with_outcome().candidates
+
+    def fetch_with_outcome(self) -> CandidateFetchOutcome:
         stale_candidates: List[CandidateWork] | None = None
         cached = self._load_cache()
         if cached:
@@ -46,7 +70,7 @@ class CandidateFetcher:
                     fetched_at.isoformat(),
                     age.total_seconds() / 3600,
                 )
-                return candidates
+                return CandidateFetchOutcome(candidates, "succeeded", True, True)
             logger.info(
                 "Candidate cache is stale (age %.1f hours); refreshing",
                 age.total_seconds() / 3600,
@@ -114,11 +138,16 @@ class CandidateFetcher:
                 enabled_sources,
                 len(stale_candidates),
             )
-            return stale_candidates
+            return CandidateFetchOutcome(
+                stale_candidates, "degraded", True, False, failed_sources
+            )
 
         logger.info("Fetched %d candidate works", len(results))
         self._save_cache(results)
-        return results
+        if enabled_sources and failed_sources == enabled_sources:
+            return CandidateFetchOutcome(results, "failed", False, False, failed_sources)
+        status = "degraded" if failed_sources else "succeeded"
+        return CandidateFetchOutcome(results, status, False, True, failed_sources)
 
     def _run_fetch_source(self, source_name: str, fetcher) -> tuple[List[CandidateWork], bool]:
         try:
@@ -220,18 +249,21 @@ class CandidateFetcher:
             url=item.get("url"),
             published=_parse_date(item.get("published_at")),
             venue=item.get("venue"),
+            is_preprint=(item.get("is_preprint") if isinstance(item.get("is_preprint"), bool) else None),
             metrics={str(key): float(value) for key, value in metrics.items() if _is_number(value)},
             extra={key: value for key, value in extra.items() if value is not None},
         )
 
     def _load_top_venues(self) -> List[str]:
-        if not self.profile_path.exists():
-            return []
-        try:
-            data = json.loads(self.profile_path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            logger.warning("Failed to load profile when reading top venues: %s", exc)
-            return []
+        data = self.profile_summary
+        if data is None:
+            if not self.profile_path.exists():
+                return []
+            try:
+                data = json.loads(self.profile_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                logger.warning("Failed to load profile when reading top venues: %s", exc)
+                return []
         venues: List[str] = []
         for entry in data.get("top_venues", []):
             name = entry.get("venue") if isinstance(entry, dict) else None
@@ -280,6 +312,7 @@ class CandidateFetcher:
     @staticmethod
     def _serialize_candidate(candidate: CandidateWork) -> dict:
         data = candidate.dict()
+        data["is_preprint"] = candidate.is_preprint
         data["published"] = ensure_isoformat(candidate.published)
         return data
 
@@ -367,10 +400,11 @@ class CandidateFetcher:
                     authors=[a for a in authors if a],
                     doi=doi,
                     url=item.get("URL"),
-                    published=_parse_date(item.get("created", {}).get("date-time")),
+                    published=date_datetime(item),
                     venue=(item.get("container-title") or [None])[0],
                     metrics={"is-referenced-by": float(item.get("is-referenced-by-count", 0))},
-                    extra={"type": item.get("type")},
+                    extra={"type": item.get("type"), **crossref_date(item),
+                           "crossref_metadata": _crossref_metadata(item)},
                 )
             )
         return results
@@ -419,12 +453,16 @@ class CandidateFetcher:
                         authors=[a for a in authors if a],
                         doi=doi,
                         url=item.get("URL"),
-                        published=_parse_date(item.get("created", {}).get("date-time")),
+                        published=date_datetime(item),
                         venue=venue,
                         metrics={"is-referenced-by": float(item.get("is-referenced-by-count", 0))},
                         extra={
                             "source": "top_venue",
-                            "type": item.get("type"),
+                            "type": item.get("type"), **crossref_date(item),
+                            "crossref_metadata": _crossref_metadata(item),
+                            **({"diagnostic_publication_dates": {
+                                field: item[field] for field in ("published", "published-online", "published-print", "issued")
+                                if field in item}} if os.getenv("ZOTWATCH_PRIVATE_FILTER_DIAGNOSTIC") == "1" else {}),
                         },
                     )
                 )
@@ -480,6 +518,7 @@ class CandidateFetcher:
                     url=entry.get("link"),
                     published=published,
                     venue="arXiv",
+                    is_preprint=True,
                     extra={"primary_category": entry.get("arxiv_primary_category", {}).get("term")},
                 )
             )
@@ -520,6 +559,7 @@ class CandidateFetcher:
                     url=rel_link,
                     published=_parse_date(entry.get("date")),
                     venue=base,
+                    is_preprint=True,
                     extra={"category": entry.get("category"), "version": entry.get("version")},
                 )
             )
@@ -598,3 +638,7 @@ def _is_number(value) -> bool:
 
 
 __all__ = ["CandidateFetcher"]
+
+
+def _crossref_metadata(item):
+    return {key:item[key] for key in ("DOI","abstract","created","published-online","published","issued","published-print") if key in item}

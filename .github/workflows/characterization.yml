@@ -1,0 +1,53 @@
+name: E0 characterization
+
+on:
+  pull_request:
+  push:
+    branches: [main, codex/dev, codex/v2, codex/v2-e0, codex/v2-e2, codex/v2-e4, codex/v2-e5a, codex/v2-e5b, codex/v2-p2a]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline-baseline:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      PYTHONHASHSEED: "0"
+      TZ: UTC
+      OMP_NUM_THREADS: "1"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.11.11"
+      - run: python -m pip install --no-cache-dir -r tests/requirements-latent.txt
+      - name: Offline baseline, first pass
+        run: python -m pytest -c tests/pytest.ini -q
+      - name: Offline baseline, repeat
+        run: python -m pytest -c tests/pytest.ini -q
+
+  offline-latent:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      PYTHONHASHSEED: "0"
+      TZ: UTC
+      OMP_NUM_THREADS: "1"
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11.11"
+      - run: python -m pip install --no-cache-dir -r tests/requirements-latent.txt
+      - name: P5B3 real HDBSCAN and state contracts, offline
+        run: python -m pytest -c tests/pytest.ini tests/test_latent_p5b3.py tests/test_clustering_benchmark_p5b3.py tests/test_auto_spherical_p5b3.py tests/test_membership_qualification_p5b3.py tests/test_embedding_benchmark_p5b3.py tests/test_frozen_candidate_p5b3.py tests/test_center_recall_p5b4.py tests/test_dual_gate_benchmark_p5b4.py -q

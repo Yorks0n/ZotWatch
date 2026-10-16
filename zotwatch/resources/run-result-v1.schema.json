@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zotwatch.dev/contracts/run-result-v1.schema.json",
+  "title": "ZotWatch Run Result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "schema_version", "run_id", "status", "exit_code", "error", "manifest_path", "state_generation_id", "output_generation_id", "artifacts"],
+  "properties": {
+    "schema_name": {"const": "zotwatch-run-result"},
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string"},
+    "status": {"enum": ["succeeded", "degraded", "failed"]},
+    "exit_code": {"enum": [0, 2, 3, 4, 5]},
+    "error": {"type": ["object", "null"]},
+    "manifest_path": {"type": ["string", "null"]},
+    "state_generation_id": {"type": ["string", "null"]},
+    "output_generation_id": {"type": ["string", "null"]},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}}
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes", "media_type", "publishable"],
+      "properties": {
+        "path": {"type": "string"},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 0},
+        "media_type": {"type": "string"},
+        "publishable": {"type": "boolean"}
+      }
+    }
+  }
+}

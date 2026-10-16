@@ -1,0 +1,53 @@
+{
+  "baseline_commit": "bf10c3c02b525ea191c5ed0f978a187a981f01c8",
+  "fixture_version": "synthetic-e0-v1",
+  "clock_utc": "2026-01-15T12:00:00+00:00",
+  "captured_on": "2026-09-10",
+  "python": "3.11.11",
+  "platform": "macOS-26.6.2-arm64-arm-64bit",
+  "dependencies": {
+    "pytest": "8.3.5",
+    "numpy": "1.26.4",
+    "faiss-cpu": "1.9.0.post1",
+    "pydantic": "2.10.6",
+    "rapidfuzz": "3.12.2",
+    "Jinja2": "3.1.6",
+    "PyYAML": "6.0.2",
+    "requests": "2.32.3",
+    "feedparser": "6.0.11"
+  },
+  "vector_source": "fixtures/vectors.json; manually specified unit vectors, no remote model",
+  "comparison": {
+    "json": "all fields and list order; float abs <= 1e-6, relative tolerance 0",
+    "rss_html": "complete bytes/text with fixed clock; no fields removed",
+    "faiss": "real search distances and neighbors, not binary bytes",
+    "sqlite": "semantic rows, metadata and embeddings; SQLite wall-clock updated_at excluded"
+  },
+  "fixture_sha256": {
+    "fixtures/candidates.json": "c753c27ce9b502b3061b9e0a7d907290450912adaca01db35af2e9c71407072a",
+    "fixtures/journal_metrics.csv": "9aa330f3ec56ec94136aaa3fc7b6dc23ea119b4316096b33cbaf9a237f45a7b2",
+    "fixtures/public-pages.json": "d3129a34c2a443a926c0e4cef3cd6cfeacdfc9302039e88eea944dfdfe30db59",
+    "fixtures/vectors.json": "7a5f734bd5c5c37b691f002c02f28ce5ddc5e96b1ce5438601aa67768683cc99",
+    "fixtures/zotero.json": "e9e505ef673101c59dafe662ac6e83b35204ab7ca4b4bc2eee0e598fe323b2ae"
+  },
+  "baseline_source_sha256": {
+    "src/__init__.py": "b0dabb55bfda69e1a4ad1363d124708002b328add4ed3254202e001ab847f630",
+    "src/build_profile.py": "e37bc4f3fdc9b3dfb941d3b86ea37d15f81fb882bf6b1afb9f8ca301ea06f8dc",
+    "src/cli.py": "8e0a84b61782117e057ce614a505949c2566dce2f2efb67651d36c56da782eb0",
+    "src/dedupe.py": "a85a9fad2aa49cbf7cee303eb47ad681dea416a68ff82291b00533e6f6f30218",
+    "src/faiss_store.py": "3dc769be3aba597c0b060c3d92160cc224a6e5bdfb9b6bd247467393689c8036",
+    "src/fetch_new.py": "9a378fbf937149aa3825e866e2cbb234ab1c6b5ab9e2e76176dad5c6b1df52d5",
+    "src/http_utils.py": "9925f7bdd70f0994fcf3f567427657c25753c37dd9562c97883f610e81cf0e29",
+    "src/ingest_zotero_api.py": "84eb06255bd849d8f3a9fef46c87e6accc10c3fee34bafad971b0ee399d837d8",
+    "src/logging_utils.py": "2786301e35a24576b2f79549e56e4cebd882cda692062046ea8662d25825eab7",
+    "src/models.py": "5c616c088203048ddd684a18f56d5b52552021888e17624100d6b9a0ba41d440",
+    "src/push_to_zotero.py": "0d3725b1dcb1ac49aa39ec1096bd4fe302212dc00caa800d90b406c25a9bcb1e",
+    "src/report_html.py": "e4924abb311f4444ae76f1a4a03c276617e87f654ac864bf945f3837baddfb32",
+    "src/rss_writer.py": "03deee2e3d95b9be950b14517bd96dd60d26ce13724970d0f8ebb6729339df80",
+    "src/score_rank.py": "09ee3e92ef0a9a5c4779a2cb76ce1530f0a2b60547d0fa7c5f08b037ad4db5ed",
+    "src/settings.py": "10bfc688e9ee41efb615ca49a242f937c42e4445491b7e66b966e32c3cb969c4",
+    "src/storage.py": "2cc2a2e3b153881c51f44d4824ab074b158d3119233497d44ba87eae508cddf2",
+    "src/utils.py": "4ffd202d5c67266a6760890540bdcc69a68b88868eeb06b2cf472baf41001d73",
+    "src/vectorizer.py": "226fbe5332caa9bc314a16ec877da153445c69c6b44a0ac78e1b4cba127820ad"
+  }
+}

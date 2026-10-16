@@ -1,0 +1,413 @@
+{
+  "$defs": {
+    "CenterMatch": {
+      "additionalProperties": false,
+      "properties": {
+        "interest_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Interest Id",
+          "type": "string"
+        },
+        "center_cosine": {
+          "maximum": 1.0,
+          "minimum": 0.55,
+          "title": "Center Cosine",
+          "type": "number"
+        }
+      },
+      "required": [
+        "interest_id",
+        "center_cosine"
+      ],
+      "title": "CenterMatch",
+      "type": "object"
+    },
+    "IntegrationEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "feedback_commit_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Feedback Commit Sha",
+          "type": "string"
+        },
+        "profile_blob_sha": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Profile Blob Sha",
+          "type": "string"
+        },
+        "semantic_input_sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Semantic Input Sha256",
+          "type": "string"
+        },
+        "model_fingerprint": {
+          "anyOf": [
+            {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Model Fingerprint"
+        },
+        "text_policy": {
+          "const": "topic-token-windows-128-mean-v1",
+          "default": "topic-token-windows-128-mean-v1",
+          "title": "Text Policy",
+          "type": "string"
+        },
+        "latent_recall": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RecallMetadata"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "recall_decisions": {
+          "items": {
+            "$ref": "#/$defs/RecallDecision"
+          },
+          "maxItems": 2000,
+          "title": "Recall Decisions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "feedback_commit_sha",
+        "profile_blob_sha",
+        "semantic_input_sha256"
+      ],
+      "title": "IntegrationEvidence",
+      "type": "object"
+    },
+    "IntegrationRecommendation": {
+      "additionalProperties": false,
+      "properties": {
+        "work_key": {
+          "title": "Work Key",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Url"
+        },
+        "matched_interest_id": {
+          "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+          "title": "Matched Interest Id",
+          "type": "string"
+        },
+        "raw_similarity": {
+          "maximum": 1.0,
+          "minimum": 0.35,
+          "title": "Raw Similarity",
+          "type": "number"
+        },
+        "priority_multiplier": {
+          "enum": [
+            0.8,
+            1.0,
+            1.2
+          ],
+          "title": "Priority Multiplier",
+          "type": "number"
+        },
+        "horizon_multiplier": {
+          "enum": [
+            1.0,
+            1.1
+          ],
+          "title": "Horizon Multiplier",
+          "type": "number"
+        },
+        "topic_relevance": {
+          "title": "Topic Relevance",
+          "type": "number"
+        },
+        "author_bonus": {
+          "enum": [
+            0.0,
+            0.02
+          ],
+          "title": "Author Bonus",
+          "type": "number"
+        },
+        "venue_bonus": {
+          "enum": [
+            0.0,
+            0.05
+          ],
+          "title": "Venue Bonus",
+          "type": "number"
+        },
+        "preference_bonus": {
+          "maximum": 0.05,
+          "minimum": 0.0,
+          "title": "Preference Bonus",
+          "type": "number"
+        },
+        "score": {
+          "title": "Score",
+          "type": "number"
+        },
+        "latent_recall": {
+          "$ref": "#/$defs/RecallDecision"
+        },
+        "confirmed_profile_revision": {
+          "pattern": "^[0-9a-f]{40}$",
+          "title": "Confirmed Profile Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "work_key",
+        "title",
+        "url",
+        "matched_interest_id",
+        "raw_similarity",
+        "priority_multiplier",
+        "horizon_multiplier",
+        "topic_relevance",
+        "author_bonus",
+        "venue_bonus",
+        "preference_bonus",
+        "score",
+        "latent_recall",
+        "confirmed_profile_revision"
+      ],
+      "title": "IntegrationRecommendation",
+      "type": "object"
+    },
+    "RecallDecision": {
+      "additionalProperties": false,
+      "properties": {
+        "interest_model_revision": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Interest Model Revision",
+          "type": "string"
+        },
+        "embedding_text_fingerprint": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Embedding Text Fingerprint",
+          "type": "string"
+        },
+        "recall_policy": {
+          "const": "center-recall-v1",
+          "default": "center-recall-v1",
+          "title": "Recall Policy",
+          "type": "string"
+        },
+        "threshold": {
+          "const": 0.55,
+          "default": 0.55,
+          "title": "Threshold",
+          "type": "number"
+        },
+        "candidate_id": {
+          "minLength": 1,
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "recalled": {
+          "title": "Recalled",
+          "type": "boolean"
+        },
+        "best_match": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CenterMatch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "secondary_matches": {
+          "items": {
+            "$ref": "#/$defs/CenterMatch"
+          },
+          "maxItems": 3,
+          "title": "Secondary Matches",
+          "type": "array"
+        },
+        "qualification": {
+          "enum": [
+            "recalled",
+            "below_threshold",
+            "insufficient_semantic_text"
+          ],
+          "title": "Qualification",
+          "type": "string"
+        }
+      },
+      "required": [
+        "interest_model_revision",
+        "embedding_text_fingerprint",
+        "candidate_id",
+        "recalled",
+        "best_match",
+        "secondary_matches",
+        "qualification"
+      ],
+      "title": "RecallDecision",
+      "type": "object"
+    },
+    "RecallMetadata": {
+      "additionalProperties": false,
+      "properties": {
+        "interest_model_revision": {
+          "pattern": "^[0-9a-f]{32}$",
+          "title": "Interest Model Revision",
+          "type": "string"
+        },
+        "embedding_text_fingerprint": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Embedding Text Fingerprint",
+          "type": "string"
+        },
+        "recall_policy": {
+          "const": "center-recall-v1",
+          "default": "center-recall-v1",
+          "title": "Recall Policy",
+          "type": "string"
+        },
+        "threshold": {
+          "const": 0.55,
+          "default": 0.55,
+          "title": "Threshold",
+          "type": "number"
+        }
+      },
+      "required": [
+        "interest_model_revision",
+        "embedding_text_fingerprint"
+      ],
+      "title": "RecallMetadata",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_name": {
+      "const": "zotwatch-latent-topic-run-result",
+      "default": "zotwatch-latent-topic-run-result",
+      "title": "Schema Name",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 3,
+      "default": 3,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "ranking_policy": {
+      "const": "topic-v1",
+      "default": "topic-v1",
+      "title": "Ranking Policy",
+      "type": "string"
+    },
+    "run_id": {
+      "pattern": "^[0-9a-f]{32}$",
+      "title": "Run Id",
+      "type": "string"
+    },
+    "command": {
+      "enum": [
+        "profile",
+        "watch"
+      ],
+      "title": "Command",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "succeeded",
+        "degraded",
+        "failed",
+        "not_ready",
+        "paused"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "exit_code": {
+      "enum": [
+        0,
+        3,
+        4,
+        5
+      ],
+      "title": "Exit Code",
+      "type": "integer"
+    },
+    "reason": {
+      "pattern": "^[A-Z_]+$",
+      "title": "Reason",
+      "type": "string"
+    },
+    "evidence": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/IntegrationEvidence"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "state_generation_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "State Generation Id"
+    },
+    "recommendations": {
+      "items": {
+        "$ref": "#/$defs/IntegrationRecommendation"
+      },
+      "maxItems": 200,
+      "title": "Recommendations",
+      "type": "array"
+    },
+    "candidate_policy": {
+      "const": "center-recall-v1",
+      "default": "center-recall-v1",
+      "title": "Candidate Policy",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "command",
+    "status",
+    "exit_code",
+    "reason"
+  ],
+  "title": "IntegrationRunResult",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}
