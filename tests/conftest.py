@@ -38,8 +38,11 @@ def pytest_unconfigure(config):
 @pytest.fixture(autouse=True)
 def isolated(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
+    # Offline workspaces must not inherit the CI repository identity or token.
+    # Tests exercising GitHub transports explicitly supply their own environment.
     for key in list(os.environ):
-        if any(word in key for word in ("ZOTERO", "SUPABASE", "MAILTO", "ALTMETRIC")):
+        if (key.startswith("GITHUB_") or key == "ZOTWATCH_WORKSPACE_REPOSITORY_ID"
+                or any(word in key for word in ("ZOTERO", "SUPABASE", "MAILTO", "ALTMETRIC"))):
             monkeypatch.delenv(key)
     monkeypatch.setenv("ZOTERO_API_KEY", "synthetic-zotero-key")
     monkeypatch.setenv("ZOTERO_USER_ID", "123456")

@@ -52,12 +52,15 @@ def candidate(key="paper", **kwargs):
                          authors=["Preferred Author"], venue="Preferred Venue", **kwargs)
 
 
-def test_shared_schema_and_fixture_are_byte_identical():
-    web = ROOT.parent / "zotwatch-web/contracts/interests"
-    assert (ROOT / "zotwatch/resources/interest-profile-v1.schema.json").read_bytes() == (web / "interest-profile-v1.schema.json").read_bytes()
-    assert (FIXTURES / "p5b1/confirmed-profile.json").read_bytes() == (web / "confirmed-profile.json").read_bytes()
-    assert json.loads((web / "interest-profile-v1.schema.json").read_text()) == {
-        **Profile.model_json_schema(), "$schema": "https://json-schema.org/draft/2020-12/schema"}
+def test_packaged_interest_schema_matches_model_and_accepts_fixture():
+    # Cross-repository byte equality is checked by the Web contract verifier
+    # against a pinned engine commit; this public suite needs no private checkout.
+    from jsonschema import Draft202012Validator
+    schema = json.loads((ROOT / "zotwatch/resources/interest-profile-v1.schema.json").read_text())
+    assert schema == {**Profile.model_json_schema(), "$schema": "https://json-schema.org/draft/2020-12/schema"}
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(profile())
+    parse_profile((FIXTURES / "p5b1/confirmed-profile.json").read_bytes())
 
 
 @pytest.mark.parametrize("change", [

@@ -32,7 +32,7 @@ def configured(name):
 def environment(workspace):
     env = dict(os.environ)
     for key in list(env):
-        if key in {"PYTHONPATH", "PYTHONHOME", "E1_DOTENV", "E1_PARENT_DOTENV"} or any(
+        if key.startswith("GITHUB_") or key == "ZOTWATCH_WORKSPACE_REPOSITORY_ID" or key in {"PYTHONPATH", "PYTHONHOME", "E1_DOTENV", "E1_PARENT_DOTENV"} or any(
                 word in key for word in ("ZOTERO", "SUPABASE", "MAILTO", "ALTMETRIC")):
             del env[key]
     env.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", HF_HOME=str(workspace / "hf-cache"),
@@ -46,6 +46,19 @@ def run(args, workspace, *, success=True):
     if success:
         assert result.returncode == 0, result.stdout + result.stderr
     return result
+
+
+def test_installed_probe_does_not_inherit_ci_repository(monkeypatch, tmp_path):
+    for key, value in {
+        "GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "example/ci",
+        "GITHUB_REPOSITORY_ID": "99999", "GITHUB_TOKEN": "synthetic-ci-token",
+        "ZOTWATCH_WORKSPACE_REPOSITORY_ID": "99999",
+    }.items():
+        monkeypatch.setenv(key, value)
+    child = environment(tmp_path)
+    assert not any(key.startswith("GITHUB_") for key in child)
+    assert "ZOTWATCH_WORKSPACE_REPOSITORY_ID" not in child
+    assert child["HF_HUB_OFFLINE"] == "1"
 
 
 def test_wheel_and_sdist_are_self_contained():
