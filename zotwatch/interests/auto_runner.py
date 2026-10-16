@@ -105,7 +105,7 @@ def run(args, paths, effective):
                 ordered = [by_key[r["work_key"]] for r in diversified]
                 admitted = engine._limit_preprints(ordered, max_ratio=effective.max_preprint_ratio)
                 allowed = {work_key(c) for c in admitted}
-                final = [r for r in diversified if r["work_key"] in allowed][:20]
+                final = [r for r in diversified if r["work_key"] in allowed][:effective.top_n]
                 if diagnostic:
                     diagnostic.stage("preprint_admission", ordered, admitted)
                     diagnostic.data["admitted_ranking"] = [r for r in rows if r["work_key"] in allowed]

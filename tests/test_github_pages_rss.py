@@ -23,6 +23,19 @@ class RSSDelivery(unittest.TestCase):
     def merge(self, result, old=None, now=NOW):
         return rss.merge_feed(result, old, URL, now, resolve=lambda guid: "Public abstract & text")
 
+    def test_new_arrivals_precede_history_with_stable_order_and_dates(self):
+        old, _ = self.merge(final("z", "a"))
+        first_dates = {k: v["pubDate"] for k, v in rss.read_feed(old).items()}
+        # Same-second publication must not sort by GUID; repeated a stays in history.
+        updated, count = self.merge(final("b", "a", "c"), old, now=NOW)
+        self.assertEqual(count, 2)
+        rows = rss.read_feed(updated)
+        self.assertEqual(list(rows), [f"urn:doi:10.1234/{key}" for key in ("b", "c", "z", "a")])
+        for key, date in first_dates.items():
+            self.assertEqual(rows[key]["pubDate"], date)
+        unchanged, count = self.merge(final("a", "b"), updated, now=NOW + timedelta(days=1))
+        self.assertEqual((unchanged, count), (updated, 0))
+
     def test_closed_public_projection_and_duplicate_identity(self):
         data, count = self.merge(final("a", "a", "b"))
         self.assertEqual(count, 2)
@@ -135,11 +148,11 @@ class RSSDelivery(unittest.TestCase):
         repeated, n = rss.merge_feed(final("1", "1"), old, URL, NOW + timedelta(days=1),
                                      resolve=lambda _: self.fail("Repeat must not fetch metadata"))
         self.assertEqual((repeated, n), (old, 0))
-        updated, n = self.merge(final("new", "99"), old, NOW + timedelta(days=2))
+        updated, n = self.merge(final("new", "1"), old, NOW + timedelta(days=2))
         items = rss.read_feed(updated)
         self.assertEqual((len(items), n), (100, 1))
         self.assertIn("urn:doi:10.1234/new", items)
-        self.assertEqual(items["urn:doi:10.1234/99"]["pubDate"], rss.read_feed(old)["urn:doi:10.1234/99"]["pubDate"])
+        self.assertEqual(items["urn:doi:10.1234/1"]["pubDate"], rss.read_feed(old)["urn:doi:10.1234/1"]["pubDate"])
 
     def test_non_success_and_empty_never_replace(self):
         old, _ = self.merge(final("a"))

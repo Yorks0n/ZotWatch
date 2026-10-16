@@ -309,7 +309,10 @@
           "then": {
             "properties": {
               "top_n": {
-                "const": 20
+                "enum": [
+                  20,
+                  30
+                ]
               }
             }
           }

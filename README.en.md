@@ -9,7 +9,7 @@ ZotWatch builds personal interest centers from your saved papers, retrieves new 
 ## What is new
 
 - **Automatic interest modeling:** sync Zotero, build a model for each user, retain versioned state, and rebuild when update conditions are met.
-- **Daily recommendations:** retrieve papers related to interest centers and apply date and deduplication rules to select up to 20 papers.
+- **Daily recommendations:** retrieve papers related to interest centers and apply date and deduplication rules to select up to 30 papers.
 - **Optional AI:** enable title/abstract translation and LLM or Jev judgment independently. Basic recommendations need no AI key; AI is off by default for new users.
 - **Specific judgment context:** with private-context consent, create versioned interest portraits and retrieve similar historical papers for each candidate. Portraits remain in the private workspace.
 - **Reading page and RSS:** publish English or bilingual paper content without exposing interest portraits, library history, or private judgment explanations.

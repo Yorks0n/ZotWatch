@@ -287,3 +287,20 @@ def test_metadata_refinement_is_independent_and_top20_only():
     assert result['translations'][0]['abstract']=='Verified replacement abstract.'
     assert result['candidates']==result['translations']
     assert result['metadata_repairs'][0]['status']=='replaced'
+
+
+def test_thirty_candidates_are_all_judged_and_partial_failure_keeps_all(tmp_path):
+    papers = [{**PAPERS[0], "work_key": f"doi:{i}", "latent_auto_rank": i + 1} for i in range(30)]
+    doc = configuration().model_dump()
+    doc["features"]["shadow"]["budget"] = dict(max_items=30, max_requests=20)
+    config = llm.LocalConfig.model_validate(doc)
+    FakeClient.calls = []
+    result = llm.shadow(config, papers, CONTEXTS, tmp_path / "thirty.json", client_factory=FakeClient)
+    assert len(result["judgments"]) == 30
+    assert sum(len(rows) for _, rows in FakeClient.calls) == 30
+    assert not result["fallback_original_top20"]
+    doc["features"]["shadow"]["budget"]["max_requests"] = 1
+    config = llm.LocalConfig.model_validate(doc)
+    result = llm.shadow(config, papers, CONTEXTS, tmp_path / "limited.json", client_factory=FakeClient)
+    assert result["fallback_original_top20"]
+    assert result["filtered_recommendations"] == papers
