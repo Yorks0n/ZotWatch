@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: "3.11.11"
       - name: Install verification tools
-        run: python -m pip install -r tests/requirements.txt -r tests/packaging-requirements.txt
+        run: python -m pip install -r tests/requirements-latent.txt -r tests/packaging-requirements.txt
       - name: Build sdist and wheel from sdist
         run: python -m build --no-isolation --outdir "$RUNNER_TEMP/e1-dist"
       - name: Install wheel with full runtime dependencies

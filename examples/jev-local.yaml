@@ -1,0 +1,20 @@
+schema_version: 1
+services:
+  judge:
+    model_env: LLM_SHADOW_MODEL
+features:
+  translation:
+    enabled: false
+  shadow:
+    enabled: true
+    provider: none  # change to jev; llm additionally requires service: judge
+    model: jev-latest  # Jev only; llm model stays in services.judge
+    batch_size: 2
+    retry_once: true
+    budget:
+      max_items: 20
+      max_requests: 12
+      max_input_tokens: 30000
+      max_output_tokens: 4000
+      timeout_seconds: 120
+allow_private_context: false  # explicit consent required for llm and jev

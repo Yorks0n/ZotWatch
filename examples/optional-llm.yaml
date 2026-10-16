@@ -1,0 +1,30 @@
+schema_version: 1
+services:
+  translator:
+    model_env: LLM_TRANSLATION_MODEL
+  judge:
+    model_env: LLM_SHADOW_MODEL
+features:
+  translation:
+    enabled: false
+    batch_size: 2
+    budget:
+      max_items: 20
+      max_requests: 20
+      max_input_tokens: 30000
+      max_output_tokens: 6000
+      timeout_seconds: 120
+    retry_once: true
+  shadow:
+    enabled: false
+    provider: none  # none / llm / jev; only the selected provider is called
+    model: jev-latest  # native Jev model; llm uses service: judge instead
+    batch_size: 2
+    budget:
+      max_items: 20
+      max_requests: 12
+      max_input_tokens: 30000
+      max_output_tokens: 4000
+      timeout_seconds: 120
+    retry_once: true
+allow_private_context: false

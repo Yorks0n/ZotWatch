@@ -1,5 +1,6 @@
 # Install independently in the PRIVATE workspace as .github/workflows/p5c6-rss.yml.
 # Copy scripts/github_pages_rss.py there; never change the recommendation caller.
+# Publishes feed.xml/feed.xsl/index.html and records the public URL in zotwatch-rss.json.
 # RSS_PAGES_REPOSITORY defaults to this workspace if its plan supports Pages.
 # Otherwise set it to the public RSS-only repo and store its write deploy key
 # as RSS_PAGES_DEPLOY_KEY. Configure Pages to gh-pages / (root) once.

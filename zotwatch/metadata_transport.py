@@ -15,8 +15,15 @@ MARKER = "metadata-remote-v1.json"
 
 
 class MetadataGitState(GitState):
+    branch = BRANCH
+    marker = MARKER
+    name = NAME
+    max_bytes = MAX_BYTES
+    validate_cache = staticmethod(Cache.validate)
+    commit_message = "Private DOI metadata cache v1"
+
     def head(self):
-        value = self.api("GET", f"/git/ref/heads/{BRANCH}", missing=True)
+        value = self.api("GET", f"/git/ref/heads/{self.branch}", missing=True)
         return value["object"]["sha"] if value else None
 
     def restore(self, state):
@@ -29,45 +36,45 @@ class MetadataGitState(GitState):
             if tree.get("truncated") is not False or len(tree["tree"]) != 1:
                 raise ValueError("Metadata branch tree invalid")
             entry = tree["tree"][0]
-            if entry["path"] != NAME or entry["type"] != "blob" or entry["mode"] != "100644" or entry["size"] > MAX_BYTES:
+            if entry["path"] != self.name or entry["type"] != "blob" or entry["mode"] != "100644" or entry["size"] > self.max_bytes:
                 raise ValueError("Metadata branch entry invalid")
             blob = self.api("GET", f"/git/blobs/{entry['sha']}")
-            if blob["encoding"] != "base64" or blob["size"] > MAX_BYTES:
+            if blob["encoding"] != "base64" or blob["size"] > self.max_bytes:
                 raise ValueError("Metadata blob invalid")
             data = base64.b64decode(blob["content"].replace("\n", ""), validate=True)
             if len(data) != entry["size"] or sha1(b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest() != entry["sha"]:
                 raise ValueError("Metadata Git blob digest mismatch")
-            Cache.validate(data, self.repository_id)
+            self.validate_cache(data, self.repository_id)
             with StateCoordinator(state).acquire():
-                temporary = state / (NAME + ".tmp")
+                temporary = state / (self.name + ".tmp")
                 temporary.write_bytes(data)
-                temporary.replace(state / NAME)
-        (state / MARKER).write_bytes(canonical({"repository_id":self.repository_id,"head":head}))
+                temporary.replace(state / self.name)
+        (state / self.marker).write_bytes(canonical({"repository_id":self.repository_id,"head":head}))
         return head
 
     def publish(self, state):
         state = Path(state)
-        marker = json.loads((state / MARKER).read_bytes())
+        marker = json.loads((state / self.marker).read_bytes())
         if set(marker) != {"repository_id","head"} or marker["repository_id"] != self.repository_id:
             raise ValueError("Metadata restore authority required")
         expected = marker["head"]
         with StateCoordinator(state).acquire():
-            data = (state / NAME).read_bytes()
-            Cache.validate(data, self.repository_id)
+            data = (state / self.name).read_bytes()
+            self.validate_cache(data, self.repository_id)
         if self.head() != expected:
             raise ValueError("Remote metadata CAS conflict")
         blob = self.api("POST", "/git/blobs", {"content":base64.b64encode(data).decode(),"encoding":"base64"})
-        tree = self.api("POST", "/git/trees", {"tree":[{"path":NAME,"mode":"100644","type":"blob","sha":blob["sha"]}]})
+        tree = self.api("POST", "/git/trees", {"tree":[{"path":self.name,"mode":"100644","type":"blob","sha":blob["sha"]}]})
         if expected:
             current = self.api("GET", f"/git/commits/{expected}")
             if current["tree"]["sha"] == tree["sha"]:
                 return {"commit_sha":expected,"cache_sha256":sha256(data).hexdigest(),"unchanged":True}
-        commit = self.api("POST", "/git/commits", {"message":"Private DOI metadata cache v1","tree":tree["sha"],"parents":[expected] if expected else []})
+        commit = self.api("POST", "/git/commits", {"message":self.commit_message,"tree":tree["sha"],"parents":[expected] if expected else []})
         if expected:
-            self.api("PATCH", f"/git/refs/heads/{BRANCH}", {"sha":commit["sha"],"force":False})
+            self.api("PATCH", f"/git/refs/heads/{self.branch}", {"sha":commit["sha"],"force":False})
         else:
-            self.api("POST", "/git/refs", {"ref":f"refs/heads/{BRANCH}","sha":commit["sha"]})
-        (state / MARKER).write_bytes(canonical({"repository_id":self.repository_id,"head":commit["sha"]}))
+            self.api("POST", "/git/refs", {"ref":f"refs/heads/{self.branch}","sha":commit["sha"]})
+        (state / self.marker).write_bytes(canonical({"repository_id":self.repository_id,"head":commit["sha"]}))
         return {"commit_sha":commit["sha"],"cache_sha256":sha256(data).hexdigest(),"unchanged":False}
 
 

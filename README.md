@@ -1,146 +1,111 @@
-# ZotWatcher
+# ZotWatch
 
-> 当前开发状态（2026-10-09）：P5C8 staging 已验收，涵盖每用户模型、自动推荐、摘要缓存、发表日期校正及 RSS v4。整理后的本地代码、staging 版本对应关系与验证结果见 [本地封存记录](docs/LOCAL_CODE_SEAL_20261009.md)。生产 rollout 仍为 NO-GO；下文保留早期版本的使用说明。
+**让 Zotero 文库成为你的论文推荐起点。**
 
-[English Version](README.en.md)
+ZotWatch 根据你收藏的论文构建个人兴趣中心，持续获取新的学术论文，生成个性化推荐，并通过网页和 RSS 交付。计算在你自己的私有 GitHub 工作空间中运行，公开结果发布到独立仓库。
 
-ZotWatcher 是一个基于 Zotero 数据构建个人兴趣画像，并持续监测学术信息源的新文献推荐流程。它每日在 GitHub Actions 上运行，将最新候选文章生成 RSS/HTML 报告，必要时也可在本地手动执行。
+[开始使用](https://zotwatch.yorks0n.com/) · [English](README.en.md) · [新版开发说明](docs/V2_DEVELOPMENT.md)
 
-## 功能概览
-- **Zotero 同步**：通过 Zotero Web API 获取文库条目，增量更新本地画像。
-- **画像构建**：对条目向量化，提取高频作者/期刊，并记录近期热门期刊。
-- **候选抓取**：优先通过统一的 Supabase Edge Functions 获取公共候选池，并对个人热门期刊做额外精准抓取。
-- **去重打分**：结合语义相似度、时间衰减、引用/Altmetric、SJR 期刊指标及白名单加分生成推荐列表。
-- **输出发布**：生成 `reports/feed.xml` 供 RSS 订阅，并通过 GitHub Pages 发布；同样可生成 HTML 报告或推送回 Zotero。
+## 新版有什么
 
-## 快速开始
+- **自动兴趣建模**：同步 Zotero 文库，构建每位用户独立的兴趣中心，按版本保存模型并在满足更新条件时重建。
+- **每日论文推荐**：从公共候选池召回与兴趣中心相关的论文，结合日期与去重规则生成最多 20 篇推荐。
+- **可选 AI**：按需启用标题与摘要翻译，以及 LLM 或 Jev 判断。基础推荐不需要 AI Key；新用户的 AI 功能默认关闭。
+- **更具体的判断上下文**：启用判断并允许私人上下文后，生成版本化兴趣画像，为每篇候选检索相近的历史文献。画像保存在私有工作空间中。
+- **网页与 RSS**：提供论文阅读页、英文或双语输出；公开发布仅包含允许公开的论文内容，不包含兴趣画像、历史文库和判断理由。
+- **独立运行**：网站负责连接账户和管理配置；已经配置好的 GitHub Actions 定时任务不依赖网站持续在线。
 
-### v2 开发版：安装后从独立 workspace 调用
+## 开始使用
 
-E1 提供 Python 3.11+ 可安装入口，继续使用下文原有三份 YAML 和 Zotero 凭据配置。以下安装命令在 ZotWatch checkout 内运行（不发布 PyPI 版本）：
+1. 打开 [ZotWatch](https://zotwatch.yorks0n.com/)，使用 GitHub 登录。
+2. 按页面引导安装并授权 GitHub 应用，创建个人工作空间。
+3. 连接 Zotero，授权读取自己的文库。
+4. 等待首次同步、兴趣模型构建和推荐运行完成。首次运行通常比后续增量运行更久。
+5. 在页面查看运行状态和结果入口，将生成的 RSS 地址加入 Zotero 或其他 RSS 阅读器。
 
-```sh
-python -m pip install .
-# 开发时可改用：python -m pip install -e .
-zotwatch --help
-zotwatch profile --workspace /path/to/personal-workspace --full
-zotwatch watch --workspace /path/to/personal-workspace --rss --report
-```
+初始化会使用**私有运行仓库 + 独立公开结果仓库**。前者保存配置和私人计算状态，后者承载论文页面与 RSS。无需 Fork 本引擎仓库，也不需要自行部署公共采集服务。
 
-个人 workspace 需要自己的 `config/zotero.yaml`、`config/sources.yaml`、`config/scoring.yaml`（可从本仓库原配置复制后编辑），凭据通过环境或该 workspace 的 `.env` 提供。包不会复制个人配置或下载模型到源码仓库。
+可在网站配置每日运行时间及可选 AI 连接。翻译和判断可以分别启用；使用 Jev 判断时，兴趣画像生成仍需要可用的 LLM 连接。请以自己的工作空间返回的结果地址为准，不要订阅开发者的测试 feed。
 
-| 参数 | 默认 / 含义 |
+## 推荐与 AI 的边界
+
+基础推荐使用文库语义与兴趣中心，AI 发布处理在原推荐列表之后执行。判断失败时保留原列表，翻译失败时保留英文，不把服务失败当成论文质量结论。
+
+文库有效论文过少、无法形成合格兴趣中心、候选不足或数据源异常，都可能导致未就绪、少量推荐或空结果。系统不会为了凑齐数量而静默降低模型要求。摘要层面的 AI 判断也不能替代阅读全文。
+
+启用带私人上下文的 AI 功能后，所选服务会收到受限的历史论文片段或兴趣描述；这些内容不写入公开 RSS。详细行为见 [兴趣中心画像](docs/CENTER_PORTRAITS_V1.md) 和 [可选 AI 使用说明](docs/P5C9_LOCAL_USAGE.md)。
+
+## 项目组成
+
+| 组件 | 职责 |
 | --- | --- |
-| `--workspace` | 当前工作目录；旧 `--base-dir` 仍可使用，两者同时指定必须指向同一路径 |
-| `--state-dir` | workspace/data，保留 SQLite、FAISS、profile 与候选缓存原格式 |
-| `--reports-dir` | workspace/reports，保留原 RSS/HTML 文件名 |
-| `--journal-metrics` | 默认 legacy：仍读取 workspace/data/journal_metrics.csv，缺失处理不变；bundled 显式读取包内原版 CSV，也可指定 CSV 路径 |
+| [ZotWatch](https://github.com/Yorks0n/ZotWatch)（本仓库） | Python 引擎、模型生命周期、配置契约、共享 Actions 工作流、RSS 发布工具 |
+| [zotwatch-web](https://github.com/Yorks0n/zotwatch-web) | Web 前端和 Cloudflare Worker，处理授权、初始化、配置及运行管理（私有源码） |
+| [zotwatch-workspace-template](https://github.com/Yorks0n/zotwatch-workspace-template) | 版本化个人工作空间模板（私有源码） |
+| [zotwatch-public-harvester](https://github.com/Yorks0n/zotwatch-public-harvester) | 公共论文元数据采集、去重、存储和读取 API |
+| 用户的私有工作空间 | 配置、凭据、定时执行与私人模型状态 |
+| 用户的公开结果仓库 | 论文阅读页和 RSS |
 
-相对 state/reports/CSV 路径相对 workspace。旧 `python -m src.cli profile|watch ...` 保留，但默认 workspace 也改为当前目录；在源码目录外使用旧命令时请指明 `--base-dir`。只加载 workspace/.env，不自动搜索 engine 目录或父目录；已有环境变量优先。
+```mermaid
+flowchart LR
+    Z[Zotero 文库] --> W[私有 GitHub 工作空间]
+    H[公共论文采集服务] --> W
+    E[ZotWatch 引擎] --> W
+    UI[ZotWatch 网站] -->|授权与配置| W
+    W -->|仅发布允许公开的结果| P[公开论文页与 RSS]
+```
 
-E1 不改变推荐算法、同步、缓存策略或默认 SJR 缺失行为。`--journal-metrics bundled` 是主动选用指标数据，可能使原本没有指标的 workspace 得到不同分数。原 1.x fork/Actions 使用方法继续如下。
+## 本地开发
 
-### E2 开发版：校验 `zotwatch.yaml`
-
-E2 增加严格的 v2 配置校验，但尚未把 v2 配置接入推荐执行。可在任意独立 workspace 离线验证：
+要求 Python 3.11+。在源码目录创建环境并安装；这里的命令从当前 checkout 安装，不代表已有 PyPI 稳定版：
 
 ```sh
-zotwatch config validate --workspace /path/to/personal-workspace
+git clone https://github.com/Yorks0n/ZotWatch.git
+cd ZotWatch
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[latent]'
+zotwatch --help
 ```
 
-普通 `zotwatch.yaml` 不含 API key、env/GitHub Secret 名、公共 Supabase key 或 engine ref。AI 默认关闭；没有任何 AI credential 的最小配置仍然合法。Preset 与两个明确的 Custom generation protocol 可通过 schema/语义校验，但 E2 没有网络 adapter；“配置合法”不表示 AI feature 当前可执行，普通 UI 也不应显示尚未实现的 provider。
+个人配置、凭据和计算状态应放在独立工作空间。对于已有 `zotwatch.yaml` 的工作空间，可以先做离线配置验证：
 
-Custom 的 `connection_id` 仅允许 engine 分配的 `custom-1` 至 `custom-4`，并在 registry 内静态对应四个预声明 credential slots。普通 UI 不显示这些 ID，config 不能填写 slot/env/Secret 名，personal runner 也不依赖 Cloudflare/D1 mapping。Custom endpoint/key 不写入校验输出、报告或 artifact。
-
-E2 的 `zotwatch profile|watch` 仍只执行 legacy 三文件配置；v2-only workspace 会返回明确的 `CONFIG_V2_EXECUTION_DEFERRED`。兼容入口 `python -m src.cli` 及其 1.x 行为保持不变。公共候选池连接作为 engine-owned package resource 提供给 v2 配置边界，legacy/self-hosted endpoint/key override 继续只在旧 adapter 中生效。
-
-1. 登录GitHub后，打开仓库页面 [ZotWatch](https://github.com/Yorks0n/ZotWatch)
-
-2. 在顶部点击**Fork**按钮创建分支，将仓库复制到自己的GitHub账号下：**Fork - Create fork**
-
-3. 到fork后的ZotWatch页面，点击设置（**Settings**），在设置页面左侧找到**Secrets and variables**，展开并点击下级的**Action**。
-   ![image1](images/image1.png)
-
-4. 点击右侧的**New repository secret**按钮，添加几个必要的Repository secrets
-   ![image2](images/image2.png)
-
-5. 添加几个必要的键值对，包括：
-
-   - `ZOTERO_API_KEY`，此为获取 Zotero 数据库中现有个人信息所必须。登录 Zotero 网站的[个人账户](https://www.zotero.org/settings/)后，在 **Settings - Security - Applications** 处点击 **Create new private key**，其中 Personal Library 给予 Allow library access，Default Group Permissions 给予 Read Only 权限，保存获得 API。
-   - `ZOTERO_USER_ID`，该 ID 可从上述 **Settings - Security - Applications** 处 **Create new private key** 按钮下方一行 `User ID: Your user ID for use in API calls is ******` 获取。
-   - `CROSSREF_MAILTO`，邮箱地址，用于个人热门期刊补抓时的礼貌标注。
-   - `OPENALEX_MAILTO`，仅在关闭统一公共候选池、回退到直连 OpenAlex 时需要。
-     ![image3](images/image3.png)
-
-6. 回到自己仓库首页，点击顶部**Settings**，在左侧找到**Pages**，在页面中为其**Source**选择**GitHub Actions**，使得生成的RSS页面直接发布到GitHub Pages。
-
-   ![image4](images/image4.png)
-
-7. 接下来点击顶部的**Actions**栏目，并确认开启GitHub Actins
-   ![image5](images/image5.png)
-
-8. 点击左侧**Daily Watch & RSS**，默认情况下fork来仓库的Workflow是关闭状态，点击右侧Enable workflow激活。
-   ![image6](images/image6.png)
-
-9. 此时仓库理论上会在每天早上六点自动运行，要立刻运行请点击**Run workflow**。首次运行需要全量生成向量数据库，会比较慢，可以点击**All workflows**查看运行状态。
-
-   ![image7](images/image7.png)
-
-10. 运行完后去 **Settings - Pages** 页面上可以看到自己的站点地址，此时直接访问此地址并不能打开，需要复制地址并在末尾加上`/feed.xml`，例如`https://[username].github.io/ZotWatch/feed.xml`，该地址可以导入 Zotero 的 RSS 订阅，或用于导入你喜欢的 RSS 阅读器。
-       ![image8](images/image8.png)
-
-11. 本项目的上游仓库会定期更新以修复错误/优化性能，因此假如你看到有更新提示，可以点击顶部的**Update branch**来更新到最新版。
-
-![image-20260306112507934](images//image-20260306112507934.png)
-
-
-
-## 本地运行
-1. **克隆仓库并准备环境**
-   ```bash
-   git clone <your-repo-url>
-   cd ZotWatcher
-   mamba env create -n ZotWatcher --file requirements.txt  # 或使用 pip 安装
-   conda activate ZotWatcher
-   ```
-
-2. **配置环境变量**
-   在仓库根目录创建 `.env` 或 GitHub Secrets，至少包含：
-   - `ZOTERO_API_KEY`：Zotero Web API 访问密钥
-   - `ZOTERO_USER_ID`：Zotero 用户 ID（数字）
-   可选：
-   - `SUPABASE_PUBLISHABLE_KEY`：仅供高级 legacy/self-hosted 配置覆盖公共候选池 key；普通 v2 用户不配置此 Secret
-   - `ALTMETRIC_KEY`：用于获取 Altmetric 数据
-   - `CROSSREF_MAILTO`：覆盖个人热门期刊补抓的联系邮箱
-   - `OPENALEX_MAILTO`：仅在关闭统一公共候选池、回退直连 OpenAlex 时使用
-
-3. **本地运行**
-   ```bash
-   # 首次全量画像构建
-   python -m src.cli profile --full
-   
-   # 日常监测（生成 RSS + HTML）
-   python -m src.cli watch --rss --report --top 20
-   ```
-
-## 目录结构
-```
-├─ src/                   # 主流程模块
-├─ config/                # YAML 配置，含 API 及评分权重
-├─ data/                  # 画像/缓存/指标文件（不纳入版本控制）
-├─ reports/               # 生成的 RSS/HTML 输出
-└─ .github/workflows/     # GitHub Actions 配置
+```sh
+zotwatch config validate --workspace /path/to/private-workspace
 ```
 
-## 自定义配置
-- `config/zotero.yaml`：Zotero API 参数（`user_id` 可写 `$ {ZOTERO_USER_ID}`，将由 `.env`/Secrets 注入）。
-- `config/sources.yaml`：统一公共候选池 API、各数据源开关、分类、窗口大小（默认 7 天）。
-- `config/scoring.yaml`：相似度、期刊质量等权重；并提供手动白名单支持。
+配置验证通过不等于凭据、模型缓存和远端服务已就绪。新版自动推荐需要私有仓库身份及固定编码器等运行条件，建议通过网站初始化的工作流运行，不要把旧版 `watch --rss` 命令直接套到 `latent-auto-v1` 配置上。
 
-## 常见问题
-- **缓存过旧**：候选列表默认缓存 12 小时，可删除 `data/cache/candidate_cache.json` 强制刷新。
-- **未找到热门期刊补抓**：确保已运行过 `profile --full` 生成 `data/profile.json`。
-- **推荐为空**：检查是否所有候选都超出 7 天窗口或预印本比例被限制；可调节 CLI 的 `--top`、`_filter_recent` 的天数或 `max_ratio`。
+本地可选 AI 工具与示例见 [使用说明](docs/P5C9_LOCAL_USAGE.md)、[默认关闭的 AI 配置](examples/optional-llm.yaml)。旧版 Fork、三 YAML 配置和本地 `src.cli` 路径见 [历史使用说明](docs/legacy-usage.zh-CN.md)。
+
+### 测试与构建
+
+```sh
+python -m pip install -r tests/requirements-latent.txt -r tests/packaging-requirements.txt
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 python -m pytest -c tests/pytest.ini -q
+python -m build --no-isolation
+```
+
+离线测试使用合成数据；安装隔离测试需专门的 wheel/editable 环境，由 packaging CI 执行。构建和本地测试不调用真实用户文库，也不代表线上端到端验收。
+
+## 版本与升级
+
+本分支汇总 ZotWatch 2.x 开发成果，Python 包版本仍为 `2.0.0.dev1`。新版网站已有部署记录；源码整理不等于发布新的稳定版本，也不会自动升级现有用户。
+
+个人工作流固定引用完整引擎提交 SHA，Web 的支持版本、初始化模板及发布脚本需要配套升级。开发阶段的 `P5C*` 文档和包含 `staging` 的工作流名称保留用于版本追溯，不代表所有这些文件都是独立产品入口。提交、验证和发布边界见 [新版开发说明](docs/V2_DEVELOPMENT.md)。
+
+## 目录
+
+```text
+zotwatch/           CLI、配置、运行契约、兴趣模型、可选 AI
+src/                同步、向量化、候选、评分及旧版兼容模块
+scripts/            RSS 发布、诊断与开发工具
+.github/workflows/  可复用运行工作流及 CI
+examples/           带版本语义的调用与配置示例
+tests/              离线回归、契约、安装和工作流测试
+docs/               架构契约、功能说明和历史验收记录
+```
 
 ## 许可证
-本项目采用 [MIT License](LICENSE)。
+
+[MIT](LICENSE)

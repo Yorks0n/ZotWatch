@@ -48,3 +48,15 @@ __pycache__/
 # P5C8 private DOI metadata cache and remote restore authority
 /data/metadata-cache-v1.json
 /data/metadata-remote-v1.json
+
+# P5C9 local private input/context, cache, results, and quality-review report
+/data/optional-llm/
+/reports/optional-llm/
+/docs/P5C9A_B_LOCAL_REPORT.md
+/docs/P5C9A_B_LOCAL_REFINEMENT.md
+/docs/P5C9B_JEV_LOCAL_REPORT.md
+
+# Private interest portraits and optional AI runtime cache
+/data/center-profiles-v1.json
+/data/center-profiles-remote-v1.json
+/data/optional-ai-cache-v1/
