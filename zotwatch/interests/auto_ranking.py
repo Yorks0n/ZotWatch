@@ -2,7 +2,7 @@
 from collections import Counter
 from .recall_integration import work_key
 
-TOP_N = 20
+TOP_N = 30
 FIRST_PASS_PER_CENTER = 3
 
 

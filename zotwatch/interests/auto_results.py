@@ -50,7 +50,7 @@ class AutoRunResult(ClosedModel):
     reason: str = Field(pattern=r"^[A-Z_]+$")
     evidence: AutoEvidence | None = None
     state_generation_id: str | None = None
-    recommendations: list[AutoRecommendation] = Field(default_factory=list, max_length=20)
+    recommendations: list[AutoRecommendation] = Field(default_factory=list, max_length=30)
 
     @model_validator(mode="after")
     def outcome(self):

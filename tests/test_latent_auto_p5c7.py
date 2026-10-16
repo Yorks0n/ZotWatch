@@ -20,11 +20,11 @@ from .test_interests_p5b1 import candidate
 def test_two_pass_order_identity_and_backfill():
     rows=[dict(work_key=f'a{i}',primary_center_id='a',center_cosine=1-i*.01) for i in range(25)]
     rows += [dict(work_key='b',primary_center_id='b',center_cosine=.6), dict(work_key='c',primary_center_id='c',center_cosine=.6)]
-    result=select(rows+rows[:1])
+    result=select(rows+rows[:1], limit=20)
     assert len(result)==20 and len({r['work_key'] for r in result})==20
     assert [r['work_key'] for r in result[:5]]==['a0','a1','a2','b','c']
     assert [r['work_key'] for r in result[5:]]==[f'a{i}' for i in range(3,18)]
-    assert select(list(reversed(rows)))==result
+    assert select(list(reversed(rows)), limit=20)==result
 
 
 def test_rank_uses_best_cosine_without_topic_or_secondary_sum():
@@ -123,3 +123,9 @@ def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, mon
         z.writestr('latent-auto-workflow-envelope-v1.json',json.dumps(envelope))
     archive=stream.getvalue()
     assert rss.load_final('owner/private',99) is None
+
+
+def test_default_candidate_pool_accepts_thirty_before_optional_judgment():
+    rows = [dict(work_key=f"paper-{i:02}", primary_center_id="a", center_cosine=1-i*.01) for i in range(40)]
+    assert len(select(rows)) == 30
+    assert [r["work_key"] for r in select(rows)] == [r["work_key"] for r in rows[:30]]

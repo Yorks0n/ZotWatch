@@ -18,7 +18,7 @@ def integrate(config, source, final, cache_dir):
     original = final['recommendations']
     if (final['status'] != 'succeeded' or final['command'] != 'watch'
         or [r['work_key'] for r in source['candidates']] != [r['work_key'] for r in original]):
-        raise ValueError('not the exact successful Top 20')
+        raise ValueError('not the exact successful Top 30')
     cache_dir = Path(cache_dir)
     quality_cache = cache_dir / ('jev-cache-v1.json' if config.features.shadow.provider == 'jev' else 'quality-llm-cache-v1.json')
     quality = shadow(config, source['candidates'], source['contexts'], quality_cache)
@@ -80,7 +80,7 @@ def main(argv=None):
     parser.add_argument("--encoder-cache", type=Path)
     args = parser.parse_args(argv)
     # Fresh operational destination: on any service/preparation error, omit optional
-    # projection and let the unchanged publisher consume the original Top 20.
+    # projection and let the unchanged publisher consume the original Top 30.
     target = args.destination / SIDECAR
     try:
         if target.exists():

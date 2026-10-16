@@ -110,7 +110,7 @@ def load_final(source, run_id):
             if (not deployment or sidecar.get("run_id") != final["run_id"] or sidecar.get("deployment_sha256") != checksum
                     or any(final["evidence"].get(k) != deployment.get(k) for k in
                         ("workspace_repository_id", "library_identity_sha256", "interest_model_revision", "embedding_text_fingerprint"))
-                    or len(final["recommendations"]) > 20
+                    or len(final["recommendations"]) > 30
                     or len({r["work_key"] for r in final["recommendations"]}) != len(final["recommendations"])
                     or any(r["score"] != r["center_cosine"] or not .55 <= r["score"] <= 1 or
                         r["primary_center_id"] not in final["evidence"]["formal_center_ids"] for r in final["recommendations"])):
@@ -475,8 +475,9 @@ def merge_feed(final, old, feed_url, now=None, resolve=public_metadata):
                               description=description(metadata["abstract"], metadata["journal"] or venues[guid], link))
     if not fresh and not reformatted:
         return old, 0
-    items.update(fresh)
-    selected = sorted(items.values(), key=lambda row: (parsedate_to_datetime(row["pubDate"]), row["guid"]), reverse=True)[:100]
+    # New arrivals lead in recommendation order; updates never promote old GUIDs.
+    # Preserve the previous feed order even when timestamps tie or clocks differ.
+    selected = (list(fresh.values()) + list(items.values()))[:100]
     root = ET.Element("rss", {"version": "2.0"})
     channel = ET.SubElement(root, "channel")
     for field, value in (("title", "ZotWatch RSS"), ("link", feed_url),

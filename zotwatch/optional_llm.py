@@ -36,7 +36,7 @@ all numbers and units. Do not invent findings, add commentary, or summarize away
 content. Empty abstracts must remain empty. Return only JSON:
 {"results":[{"id":"...","title_zh":"...","abstract_zh":"..."}]}.
 Return exactly one result per input id, in any order."""
-SHADOW_PROMPT = """Assess only the existing Top 20 papers against their matched historical
+SHADOW_PROMPT = """Assess only the existing Top 30 papers against their matched historical
 representatives and their interest-center portrait. The portrait describes broader
 interests; the representatives are the three nearest historical members to this
 candidate. Consider both, including useful adjacent work. Journal prestige alone is
@@ -373,7 +373,7 @@ def refine_metadata(source, *, providers=None, now=None):
     used = {r["primary_center_id"] for r in originals}
     result["contexts"] = {k: v for k, v in result["contexts"].items() if k in used}
     result["metadata_repairs"] = repairs
-    result["sample_policy"] = "original final Top 20 only; unchanged order"
+    result["sample_policy"] = "original final Top 30 only; unchanged order"
     return result
 
 
@@ -413,10 +413,10 @@ def shadow(config, papers, contexts, cache_path, *, client_factory=CompatibleCli
     # Older 50-paper local inputs are accepted, but only their original final set
     # is evaluated. Input order must be the existing latent-auto final order.
     papers = [r for r in papers if r.get("final_recommended")]
-    if len(papers) > 20 or len({r["work_key"] for r in papers}) != len(papers):
-        raise ValueError("invalid Top 20 identity/count")
+    if len(papers) > 30 or len({r["work_key"] for r in papers}) != len(papers):
+        raise ValueError("invalid Top 30 identity/count")
     if [r["latent_auto_rank"] for r in papers] != sorted(r["latent_auto_rank"] for r in papers):
-        raise ValueError("Top 20 must retain original order")
+        raise ValueError("Top 30 must retain original order")
     route = config.features.shadow
     if route.enabled and route.provider != "none" and config.allow_private_context:
         inputs = []
@@ -517,7 +517,7 @@ def prepare(result_path, diagnostic_path, metadata_path, generation_path, model_
             dict(result=result_path, diagnostic=diagnostic_path, metadata=metadata_path,
                  generation=generation_path, model=model_path).items()},
         translations=[r for r in rows if r["final_recommended"]], candidates=sampled, contexts=contexts,
-        sample_policy="original final Top 20 only; unchanged order")
+        sample_policy="original final Top 30 only; unchanged order")
 
 
 def render_html(result):
@@ -540,10 +540,10 @@ def render_html(result):
                 parts.append('<p>' + escape(row["abstract_zh"]) + '</p>')
             parts.append('<small>' + escape(row["work_key"] + ' · ' + row["status"]) + '</small></article>')
     else:
-        parts.append('<p>原 Top 20：' + escape(result["before_count"]) + ' 篇；模拟过滤后：' +
+        parts.append('<p>原 Top 30：' + escape(result["before_count"]) + ' 篇；模拟过滤后：' +
             escape(result["after_count"]) + ' 篇。review 保留，exclude 剔除；不重新排序、不补位。</p>')
         if result["fallback_original_top20"]:
-            parts.append('<p>有效判断未全部完成，回退原 Top 20；本次不剔除。</p>')
+            parts.append('<p>有效判断未全部完成，回退原 Top 30；本次不剔除。</p>')
         parts.append('<table><tr><th>原顺序</th><th>论文</th><th>Decision</th><th>相关性 / 贡献</th><th>具体理由</th></tr>')
         for row in result["judgments"]:
             detail = row["reason"]
@@ -568,7 +568,7 @@ def main(argv=None):
     for name in ("result", "diagnostic", "metadata", "generation", "model"):
         prep.add_argument("--" + name, required=True, type=Path)
     prep.add_argument("--output", required=True, type=Path)
-    repair = sub.add_parser("refine-metadata", help="repair suspect Top 20 abstracts into a separate local input")
+    repair = sub.add_parser("refine-metadata", help="repair suspect Top 30 abstracts into a separate local input")
     repair.add_argument("--input", required=True, type=Path)
     repair.add_argument("--output", required=True, type=Path)
     for name in ("translate", "shadow"):

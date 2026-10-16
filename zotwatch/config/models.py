@@ -40,7 +40,7 @@ class RankingConfigV2(StrictConfigModel):
     model_config = ConfigDict(json_schema_extra={
         "allOf": [{
             "if": {"properties": {"policy": {"const": "latent-auto-v1"}}},
-            "then": {"properties": {"top_n": {"const": 20}}},
+            "then": {"properties": {"top_n": {"enum": [20, 30]}}},
         }],
     })
     policy: Literal["legacy-v1", "topic-v1", "latent-auto-v1"]
@@ -50,8 +50,8 @@ class RankingConfigV2(StrictConfigModel):
     # Fixed v1 policy; configurable top_n remains for historical modes only.
     @model_validator(mode="after")
     def auto_top_n(self):
-        if self.policy == "latent-auto-v1" and self.top_n != 20:
-            raise ValueError("latent-auto-v1 requires top_n=20")
+        if self.policy == "latent-auto-v1" and self.top_n not in (20, 30):
+            raise ValueError("latent-auto-v1 requires top_n=20 or 30")
         return self
 
 
