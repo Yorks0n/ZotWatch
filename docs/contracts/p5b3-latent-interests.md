@@ -134,3 +134,26 @@ Daily reuse here is proved on persistent local state only. P5B4 must add a
 versioned, reviewed checkpoint extension before scheduled ephemeral runners can
 claim monthly reuse. Recall thresholds, 100–200 candidate limits, ranking,
 semantic profiles and Basic/AI onboarding remain subsequent phases.
+
+## Automatic K selection
+
+`auto-spherical-size-v1` counts only eligible records with a nonempty abstract.
+Title-only records are excluded before N and K are computed. Each rebuild selects
+one K and calls the spherical fitter once; there is no multi-K quality search.
+
+```text
+N < 10: K = 0 (no fit)
+otherwise:
+  prior = 0.8 * sqrt(N)
+  rounded = prior < 20 ? round_half_up(prior) : 5 * round_half_up(prior / 5)
+  support_cap = max(1, floor(N / 20))
+  K = min(max(1, rounded), support_cap, 60, distinct_directions)
+```
+
+`distinct_directions` counts distinct normalized vectors. Nonfinite or zero
+vectors fail validation. The default fitter uses seed 20260930, 10 restarts and
+300 maximum iterations. The support cap does not guarantee 20 members per
+cluster; formal membership qualification remains a separate step. The size
+prior and ceiling are engineering limits, not a cross-user optimum. Daily
+recommendation reuses the published model; the lifecycle decides when to rebuild.
+Implementation: [auto_spherical.py](../../zotwatch/interests/auto_spherical.py).

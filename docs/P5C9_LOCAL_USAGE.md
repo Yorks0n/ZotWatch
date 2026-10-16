@@ -116,4 +116,4 @@ Jev 默认缓存 `jev-cache-v1.json`，与现有 LLM 默认缓存文件、schema
 
 P5C9C staging 使用新增的保守排除门槛：只有 mismatch_exclude 的概率≥0.80、confidence≥0.60、领先次高选项≥0.20且有效摘要≥200字符时剔除；其余原生排除转 review 并保留。原生 choice/native_decision 仍记录，贡献质疑不会单独执行排除。规则版本为 p5c9-jev-conservative-exclusion-v1，native cache 版本更新为 p5c9-jev-joint-quality-v2。此前 Jev 本地报告保留原版本结果，不重写历史判断。
 
-Staging 配置例见 `examples/p5c9c-staging-ai.yaml`，接线和验收见 [P5C9C staging integration](P5C9C_STAGING_INTEGRATION.md)。翻译代码及 DeepSeek quality Prompt 保持已确认版本。
+Staging 配置例见 `examples/p5c9c-staging-ai.yaml`，接线和验收见 [P5C9C staging integration](archive/P5C9C_STAGING_INTEGRATION.md)。翻译代码及 DeepSeek quality Prompt 保持已确认版本。

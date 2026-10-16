@@ -1,3 +1,5 @@
+> 历史归档：本文保留对应阶段的计划或验收事实，不代表当前部署状态或待办事项。
+
 # P2 — GitHub Personal Compute/Data Plane Results
 
 P2 starts from the E5 baseline
@@ -108,3 +110,27 @@ The central ZotWatch repository is public for the P2 v1 cross-repository
 checkout/authentication model. Changing it to private requires a new access
 and authentication review; the current caller token is not assumed to read an
 arbitrary private central repository.
+
+## P2A validation evidence (2026-09-14)
+
+- Local full gate: 230 passed, 16 skipped.
+- Local focused P2A gate: 23 passed.
+- Local sdist/wheel build includes `zotwatch.workflow` and
+  `state-checkpoint-v1.schema.json`.
+- PR #10 final head `f14269932eacf84e9055cd08679971a49db93d5e`:
+  E0 characterization push/PR gates passed; packaging/install push/PR gates
+  passed.
+- Merged baseline `7205a2b6f01851aed8382025289542eb81f8dabe`:
+  E0 characterization run `34830513715` and packaging/config run
+  `34830513647` passed.
+- Disposable private cross-repository caller:
+  `Yorks0n/zotwatch-p2a-smoke-20260914`, caller commit
+  `6c785a1204b982747cb4c73dcb334c6e22f9f5a7`, run `34830736399`, passed a
+  credential-free `workflow_dispatch` validate call pinned literally to
+  `S_P2A`.  The caller and engine commits differ, and the reusable job
+  completed the caller checkout, exact central checkout, identity assertion,
+  offline config validation and skipped all state/credential/output steps.
+
+No pre-P2 fixture or golden was modified.  The only new fixture is the P2
+third-party Action pin registry.  Ranking, Zotero synchronization, candidate
+fetch semantics, E4 persistence and E5 result schemas are unchanged.

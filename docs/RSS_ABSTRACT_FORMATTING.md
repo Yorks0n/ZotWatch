@@ -20,4 +20,15 @@ RSS description 使用经白名单清洗的 HTML，保留公开摘要中的段�
 
 ## 集中修复（已发布）
 
-v4 修复段内源码换行、非法段落/列表嵌套及英文页尾。20 项相关测试通过；两篇真实摘要全文及浏览器排版已核验。v4 已按用户授权发布，原订阅地址已返回新文件，自动发布已恢复。详见 [修复与发布记录](RSS_FORMATTING_PENDING.md)。
+v4 修复段内源码换行、非法段落/列表嵌套及英文页尾。20 项相关测试通过；两篇真实摘要全文及浏览器排版已核验。v4 已按用户授权发布，原订阅地址已返回新文件，自动发布已恢复。发布证据见下节。
+
+## v4 发布证据（2026-10-09，历史记录）
+
+- Publisher：`da1c6bf4fd14578fbf9b0a1b50e9eff7edf12074`。
+- [RSS workflow](https://github.com/ykson-dev/zotwatch-p5a3-staging-20260929/actions/runs/37875340178)：成功，32 条、new_items=0；第二次发布 changed=false。
+- RSS commit：`b297c543c09d0d0b623788d776c081537c4d8f16`；[Pages 部署](https://github.com/Yorks0n/zotwatch-rss-staging/actions/runs/37875395262)成功。
+- 当时 feed SHA-256：`3cae551c1ab3e7cb6f63ad6a4ab6e2fdb77debf98fbb1a8bdd74945e1604a27e`。
+- 32 条 title/GUID/link/pubDate 保持原值，description 均为 v4；自动发布已恢复。
+- 两篇真实摘要在排除空白后全文一致；列表保留四项，无 p 嵌套 p/ul/ol。用户自己的 RSS 阅读器未直接复验。
+
+这些是当次发布的证据，不代表重新验证了当前线上内容。

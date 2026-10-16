@@ -2,7 +2,7 @@
 
 # ZotWatcher
 
-> 当前开发状态（2026-10-09）：P5C9D 每日私有 staging 与新双语 RSS 已通过单次完整 E2E，判断默认 none、翻译默认开启。部署、配置和验收结果见 [P5C9D 报告](P5C9D_DAILY_WORKFLOW_RSS_DEPLOYMENT.md)。Production 保持不变；下文保留早期版本的使用说明。
+> 当前开发状态（2026-10-09）：P5C9D 每日私有 staging 与新双语 RSS 已通过单次完整 E2E，判断默认 none、翻译默认开启。部署、配置和验收结果见 [P5C9D 报告](archive/P5C9D_DAILY_WORKFLOW_RSS_DEPLOYMENT.md)。Production 保持不变；下文保留早期版本的使用说明。
 
 [English Version](../README.en.md)
 
@@ -93,7 +93,7 @@ E2 的 `zotwatch profile|watch` 仍只执行 legacy 三文件配置；v2-only wo
 
 11. 本项目的上游仓库会定期更新以修复错误/优化性能，因此假如你看到有更新提示，可以点击顶部的**Update branch**来更新到最新版。
 
-![image-20260306112507934](../images//image-20260306112507934.png)
+![image-20260306112507934](../images/image-20260306112507934.png)
 
 
 

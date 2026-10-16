@@ -102,3 +102,5 @@ docs/               Contracts, feature guides, historical acceptance records
 ## License
 
 [MIT](LICENSE)
+
+Historical implementation and acceptance records: [documentation archive](docs/archive/README.md).

@@ -1,3 +1,5 @@
+> 历史归档：本文保留对应阶段的计划或验收事实，不代表当前部署状态或待办事项。
+
 # P5C9D — Daily Workflow Consolidation & RSS Deployment
 
 日期：2026-10-09（Asia/Shanghai）。**P5C9D 手动 E2E = PASS。** 每日 schedule 已配置；首次自然 schedule 事件尚待观察，不额外运行 AI 验证定时触发。

@@ -7,7 +7,7 @@ P5B3 的可选聚类测试另用 `tests/requirements-latent.txt` 安装依赖，
 
 `tests/test_auto_spherical_p5b3.py` 验证按库大小选择 K、支持数/方向数上限、
 小库与非法输入，以及 wrapper 只调用一次原 spherical fitter、输出与显式 K 一致。
-设计与本地评估见 [P5B3_AUTO_SPHERICAL.md](../docs/P5B3_AUTO_SPHERICAL.md)。
+设计与本地评估见 [自动 K 选择规则](../docs/contracts/p5b3-latent-interests.md)。
 
 `tests/test_membership_qualification_p5b3.py` 验证 abstract-only qualification、
 weak/ambiguous exclusion、≥10 distinct strong works、一次 trimming、

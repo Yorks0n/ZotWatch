@@ -201,7 +201,7 @@ exactly, in approximately 1.12 seconds including diagnostics. No new embeddings,
 LLM calls or state mutation; full regression **300 passed, 16 existing skips**.
 
 Design, size schedule, evidence and limitations are documented in
-[P5B3_AUTO_SPHERICAL.md](P5B3_AUTO_SPHERICAL.md). This automates a size prior;
+[自动 K 选择规则](contracts/p5b3-latent-interests.md). This automates a size prior;
 it does not establish optimal K, minimum per-cluster support or semantic quality
 PASS. Existing HDBSCAN builder/persistence and accepted P5C remain unchanged;
 P5B4 and staging/production rollout are still deferred.

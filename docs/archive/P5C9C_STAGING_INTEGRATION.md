@@ -1,3 +1,5 @@
+> 历史归档：本文保留对应阶段的计划或验收事实，不代表当前部署状态或待办事项。
+
 # P5C9C Staging Integration
 
 **P5C9C staging E2E 已通过（2026-10-09），不代表 Production Readiness。** 新私有 staging：`Yorks0n/zotwatch-p5c9-staging-20261009`，仅手动运行；RSS 使用已有 `Yorks0n/zotwatch-rss-staging`。Production、原 caller 与正式推荐策略不迁移。
@@ -43,7 +45,7 @@ API key 使用 Secrets：ZOTERO_USER_ID/ZOTERO_API_KEY、LLM_API_KEY、TYPESAFE_
 - RSS 只发布 feed.xml/index.html，没有私人代表文献、中心 ID、模型、判断或 key。公开输出通过 Secret 值检查；私人质量/译文 evidence 保存在 ignored 本地目录。
 - 默认配置已恢复 `none` / allow_private_context=false，独立双语翻译保持开启；恢复提交 `0ca2112bd03147cfd323c8b082c4e39d88ffcd32`。新 caller 仅 manual dispatch，没有设置每日双模型或新的 schedule。
 
-[公开 staging RSS](https://yorks0n.github.io/zotwatch-rss-staging/feed.xml)。本地 [E2E 验证 JSON](../reports/optional-llm/staging/e2e-verification.json)、[双语译文查看](../reports/optional-llm/staging/translations.html)、[质量判断查看](../reports/optional-llm/staging/quality-filter.html)、[原始 latent-auto 结果](../reports/optional-llm/staging/latent-auto-result-v1.json)。
+[公开 staging RSS](https://yorks0n.github.io/zotwatch-rss-staging/feed.xml)。本地 [E2E 验证 JSON](../../reports/optional-llm/staging/e2e-verification.json)、[双语译文查看](../../reports/optional-llm/staging/translations.html)、[质量判断查看](../../reports/optional-llm/staging/quality-filter.html)、[原始 latent-auto 结果](../../reports/optional-llm/staging/latent-auto-result-v1.json)。
 
 用户明确授权四项本地 Secrets 的目的仓库及 RSS-only deploy key；Secrets 经加密配置，临时私钥已删除。自动审批先拒绝未明确授权的凭据传输，得到用户确认后完成；后拒绝读取完整私有 Actions 日志，改为只读 artifact/状态/公开 feed 检查完成验证，没有读取该日志或增加权限。
 

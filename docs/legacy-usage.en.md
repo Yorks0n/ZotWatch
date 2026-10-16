@@ -88,7 +88,7 @@ In E2, `zotwatch profile|watch` continues to execute only the three-file legacy 
     ![image8](../images/image8.png)
 
 11. The upstream repository of this project is regularly updated to fix bugs and optimize performance. Therefore, if you see an update notification, you can click **Update branch** at the top to update to the latest version.
-   ![image-20260306112507934](../images//image-20260306112507934.png)
+   ![image-20260306112507934](../images/image-20260306112507934.png)
 
 ## Run Locally
 1. **Clone the repository and prepare the environment**
