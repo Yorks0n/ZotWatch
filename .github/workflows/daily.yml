@@ -74,7 +74,7 @@ jobs:
   compute:
     runs-on: ubuntu-24.04
     permissions:
-      contents: write
+      contents: read
       actions: write
     concurrency:
       group: zotwatch-${{ github.repository_id }}-${{ github.workflow_ref }}-${{ github.ref }}
