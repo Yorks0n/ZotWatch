@@ -2,7 +2,7 @@
 """RSS-only delivery of finalized recommendations; Python standard library only.
 
 Run in the private workspace's separate workflow. Never copy/extract an artifact
-into the Pages checkout. Only feed.xml and a constant index.html may be pushed.
+into the Pages checkout. Only feed.xml, feed.xsl and its public HTML reading page may be pushed.
 """
 import argparse
 import hashlib
@@ -23,10 +23,6 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 
-INDEX = ('<!doctype html>\n<html lang="en"><meta charset="utf-8">'
-         '<title>ZotWatch RSS</title><link rel="alternate" '
-         'type="application/rss+xml" title="ZotWatch RSS" href="feed.xml">'
-         '<p><a href="feed.xml">Subscribe to ZotWatch RSS</a></p></html>\n')
 ARTIFACT = "zotwatch-private-per-user-latent-run-v1"
 SOURCE_PATHS = {".github/workflows/p5c4-lifecycle.yml"}
 ITEM_FIELDS = {"title", "link", "guid", "pubDate", "description"}
@@ -119,6 +115,12 @@ def load_final(source, run_id):
                     or any(r["score"] != r["center_cosine"] or not .55 <= r["score"] <= 1 or
                         r["primary_center_id"] not in final["evidence"]["formal_center_ids"] for r in final["recommendations"])):
                 raise ValueError("Invalid latent-auto provenance")
+        optional = None
+        if auto and "rss-ai-v1.json" in names:
+            try:
+                optional = read_json("rss-ai-v1.json")
+            except (ValueError, KeyError, TypeError):
+                pass  # Invalid optional delivery data cannot suppress original recommendations.
     if (str(envelope["caller_run_id"]) != str(run_id)
             or str(envelope["workspace_repository_id"]) != str(run["repository"]["id"])
             or envelope["run_id"] != final["run_id"]
@@ -128,7 +130,38 @@ def load_final(source, run_id):
         return None
     if final["exit_code"] != 0 or not isinstance(final["recommendations"], list):
         raise ValueError("Invalid successful result")
-    return final
+    return apply_delivery_sidecar(final, optional) if auto and optional is not None else final
+
+
+def apply_delivery_sidecar(final, value, *, verify_source=True):
+    """Validate a closed public projection bound to this exact immutable result."""
+    try:
+        fields = {"schema_name", "schema_version", "run_id", "source_final_sha256", "retained_work_keys", "papers"}
+        if (set(value) not in (fields, fields | {"output_mode"})
+            or value.get("output_mode", "bilingual") not in ("english", "bilingual", "chinese")
+            or value["schema_name"] != "zotwatch-staging-rss-ai" or value["schema_version"] != 1
+            or value["run_id"] != final["run_id"]
+            or (verify_source and value["source_final_sha256"] != hashlib.sha256(json.dumps(final, ensure_ascii=False,
+                sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest())):
+            raise ValueError("Wrong delivery source")
+        keys = value["retained_work_keys"]
+        original = final["recommendations"]
+        selected = [r for r in original if r["work_key"] in keys]
+        if (not isinstance(keys, list) or any(not isinstance(k, str) for k in keys)
+            or keys != [r["work_key"] for r in selected] or not isinstance(value["papers"], list)
+            or len(value["papers"]) != len(keys)):
+            raise ValueError("Reordered, replaced or duplicate recommendations")
+        for row, paper in zip(selected, value["papers"]):
+            if (set(paper) != {"work_key", "title_en", "abstract_en", "title_zh", "abstract_zh"}
+                or paper["work_key"] != row["work_key"] or plain(paper["title_en"]) != plain(row["title"])
+                or not isinstance(paper["abstract_en"], str) or len(paper["abstract_en"]) > 6000
+                or any(v is not None and (not isinstance(v, str) or len(v) > limit)
+                       for v, limit in ((paper["title_zh"], 4000), (paper["abstract_zh"], 50000)))):
+                raise ValueError("Nonpublic or invalid delivery data")
+        return {**final, "recommendations": selected, "_staging_ai": {r["work_key"]: r for r in value["papers"]},
+                "_staging_output_mode": value.get("output_mode", "bilingual")}
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return final
 
 
 def identity(row):
@@ -264,6 +297,31 @@ def description(abstract, journal, link):
             + escape(link) + "</a></p></div>")
 
 
+def delivery_description(paper, journal, link, mode="bilingual"):
+    if mode == "chinese":
+        body = abstract_html(paper.get("abstract_zh") or paper["abstract_en"])
+        return ('<div class="zotwatch-rss-description-v5"><h3>摘要</h3><div>' + body
+            + '</div><p>期刊：' + escape(plain(journal) or "未提供")
+            + '</p><p>原文链接：<a href="' + escape(link, quote=True) + '">'
+            + escape(link) + '</a></p></div>')
+    if mode == "english" or not paper.get("abstract_zh"):
+        return description(paper["abstract_en"], journal, link)
+    return ('<div class="zotwatch-rss-description-v5"><h3>Abstract</h3><div>'
+        + abstract_html(paper["abstract_en"]) + '</div><h3>摘要</h3><div>'
+        + abstract_html(paper["abstract_zh"]) + '</div><p>Journal: '
+        + escape(plain(journal) or "Not provided") + '</p><p>Original article: <a href="'
+        + escape(link, quote=True) + '">' + escape(link) + '</a></p></div>')
+
+
+def valid_public_abstract(value):
+    """Same accepted text checks as metadata enrichment; keep safe source markup."""
+    text = plain(value)
+    return bool(text) and len(text) <= 6000 and not re.search(
+        r"\b(author contributions?|conflict of interest|publisher.s note|"
+        r"data availability statement|the author confirms being the sole contributor)\b",
+        text, re.I) and not (len(text) < 600 and re.search(r"[,;].*https?:", text, re.I))
+
+
 def public_metadata(guid):
     journal = ""
     if guid.startswith("urn:doi:"):
@@ -275,7 +333,7 @@ def public_metadata(guid):
                 raise ValueError("Public metadata identity mismatch")
             journal = plain(next(iter(metadata.get("container-title") or []), ""))
             abstract = metadata.get("abstract", "")
-            if plain(abstract):
+            if valid_public_abstract(abstract):
                 return {"abstract": abstract, "journal": journal}
         except (OSError, ValueError, KeyError):
             pass
@@ -286,7 +344,7 @@ def public_metadata(guid):
                 if (row.get("doi") or "").lower() == doi:
                     journal = journal or plain(((row.get("journalInfo") or {}).get("journal") or {}).get("title", ""))
                     abstract = row.get("abstractText", "")
-                    if plain(abstract):
+                    if valid_public_abstract(abstract):
                         return {"abstract": abstract, "journal": journal}
         except (OSError, ValueError, KeyError):
             pass
@@ -304,7 +362,8 @@ def public_metadata(guid):
                         raise ValueError("Invalid public abstract index")
                     words[position] = word
             journal = journal or plain(((metadata.get("primary_location") or {}).get("source") or {}).get("display_name", ""))
-            return {"abstract": " ".join(words[i] for i in sorted(words)), "journal": journal}
+            abstract = " ".join(words[i] for i in sorted(words))
+            return {"abstract": abstract if valid_public_abstract(abstract) else "", "journal": journal}
         except (OSError, ValueError, KeyError, TypeError):
             return {"abstract": "", "journal": journal}
     identifier = guid[10:]
@@ -313,7 +372,8 @@ def public_metadata(guid):
     entry = root.find("a:entry", ns)
     if entry is None or not re.search(re.escape(identifier) + r"(?:v\d+)?$", entry.findtext("a:id", "", ns)):
         raise ValueError("Public metadata identity mismatch")
-    return {"abstract": entry.findtext("a:summary", "", ns), "journal": "arXiv"}
+    abstract = entry.findtext("a:summary", "", ns)
+    return {"abstract": abstract if valid_public_abstract(abstract) else "", "journal": "arXiv"}
 
 
 def public_abstract(guid):
@@ -370,8 +430,9 @@ def merge_feed(final, old, feed_url, now=None, resolve=public_metadata):
     fresh = {}
     reformatted = False
     venues = {identity(row)[0]: row.get("venue", "") for row in final["recommendations"]}
+    delivery = {identity({"work_key": key})[0]: paper for key, paper in final.get("_staging_ai", {}).items()}
     for guid, item in items.items():
-        if not item["description"].startswith(DESCRIPTION_PREFIX):
+        if not item["description"].startswith((DESCRIPTION_PREFIX, '<div class="zotwatch-rss-description-v5">')):
             metadata = resolve(guid)
             if isinstance(metadata, str):
                 metadata = {"abstract": metadata, "journal": ""}
@@ -384,6 +445,24 @@ def merge_feed(final, old, feed_url, now=None, resolve=public_metadata):
     stamp = format_datetime(now or datetime.now(timezone.utc), usegmt=True)
     for row in final["recommendations"]:
         guid, link = identity(row)
+        if guid in delivery:
+            paper = delivery[guid]
+            mode = final.get("_staging_output_mode", "bilingual")
+            title = plain(row["title"])
+            if mode == "chinese":
+                title = plain(paper.get("title_zh") or "") or title
+            elif mode == "bilingual" and paper.get("title_zh"):
+                title += " | " + plain(paper["title_zh"])
+            rendered = dict(title=title,
+                link=link, guid=guid, pubDate=items[guid]["pubDate"] if guid in items else stamp,
+                description=delivery_description(paper, venues[guid], link, mode))
+            if guid in items:
+                if items[guid] != rendered:
+                    items[guid] = rendered
+                    reformatted = True
+            else:
+                fresh[guid] = rendered
+            continue
         if guid not in items and guid not in fresh:
             title = plain(row["title"])
             if not title:
@@ -420,6 +499,107 @@ def git(*args, cwd=None):
     return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
+READER_CSS = """
+:root{color-scheme:light;--ink:#243d2c;--muted:#657569;--line:#d8e2d4}*{box-sizing:border-box}
+body{margin:0;background:#f6f8f2;color:var(--ink);font:16px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+a{color:#355c3f;text-decoration:none}a:hover{text-decoration:underline}main{max-width:1040px;margin:auto;padding:48px 24px}
+.brand{font-size:14px;letter-spacing:.08em;font-weight:700}.hero{padding:30px 0 34px}h1{font-size:clamp(30px,5vw,46px);line-height:1.2;margin:16px 0}
+.hero p{color:var(--muted);max-width:650px}.subscribe{padding:22px;background:#eaf0e4;border:1px solid var(--line);border-radius:18px}
+.subscribe label{display:block;font-size:13px;margin-bottom:8px}.subscribe input{width:100%;padding:12px;border:1px solid #c5d4bf;border-radius:9px;background:white;color:var(--ink);font:inherit}
+.subscribe nav{display:flex;gap:20px;flex-wrap:wrap;margin-top:12px;font-size:14px}.sectionLabel{margin:30px 0 16px;color:var(--muted);font-size:14px}
+article{background:white;border:1px solid var(--line);border-radius:18px;padding:26px;margin-bottom:18px;overflow-wrap:anywhere}
+article header{display:flex;gap:12px;align-items:center;color:var(--muted);font-size:12px}.number{color:#355c3f;background:#edf3e7;padding:2px 9px;border-radius:6px}
+h2{font-size:22px;line-height:1.5;margin:12px 0 18px}h3{font-size:16px;margin:18px 0 6px}.abstract{font-size:15px;color:#3b4d40}.abstract p{margin:10px 0}
+.articleLink{display:inline-block;margin-top:18px;font-size:13px;border-top:1px solid var(--line);padding-top:14px;width:100%}
+footer{margin-top:32px;color:var(--muted);font-size:13px}@media(max-width:540px){main{padding:24px 16px}article{padding:20px}h2{font-size:20px}}
+"""
+XSLT = '''<?xml version="1.0" encoding="UTF-8"?>
+<xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
+<xsl:output method="html" encoding="UTF-8" doctype-system="about:legacy-compat"/>
+<xsl:template match="/rss"><html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>ZotWatch · 科研文献订阅</title><style>''' + READER_CSS + '''</style></head><body><main>
+<div class="brand">ZW / ZOTWATCH RESEARCH FEED</div><div class="hero"><h1>让值得读的文献<br/>来到你面前。</h1><p>你的科研文献订阅。直接浏览最新推荐，或将下面的链接导入 RSS 阅读器。</p></div>
+<div class="subscribe"><label for="feed-url">RSS 订阅链接 · 选择并复制到阅读器</label><input id="feed-url" readonly="readonly" value="{channel/link}"/><nav><a href="index.html">打开完整阅读页 ↗</a><a href="feed.xml">RSS XML ↗</a></nav></div>
+<p class="sectionLabel">最近推荐 · <xsl:value-of select="count(channel/item)"/> 篇</p>
+<xsl:for-each select="channel/item"><article><header><span class="number"><xsl:value-of select="position()"/></span><time><xsl:value-of select="pubDate"/></time></header><h2><xsl:value-of select="title"/></h2><div class="abstract"><xsl:call-template name="description"><xsl:with-param name="text" select="description"/></xsl:call-template></div><xsl:if test="starts-with(link, 'https://doi.org/') or starts-with(link, 'https://arxiv.org/abs/')"><a class="articleLink" href="{link}" rel="noreferrer" target="_blank">阅读原文 ↗</a></xsl:if></article></xsl:for-each>
+<footer>ZotWatch · 只展示文献公开信息；推荐更新后，订阅地址保持不变。</footer></main></body></html></xsl:template>
+<!-- Treat description markup as text: never execute or copy arbitrary HTML. -->
+<xsl:template name="description"><xsl:param name="text"/>
+<xsl:choose><xsl:when test="contains($text, '&lt;')"><xsl:call-template name="entities"><xsl:with-param name="text" select="substring-before($text, '&lt;')"/></xsl:call-template><xsl:variable name="tail" select="substring-after($text, '&lt;')"/><xsl:variable name="tag" select="substring-before($tail, '&gt;')"/><xsl:if test="$tag='br' or $tag='br/' or $tag='/p' or $tag='/div' or $tag='/h3' or $tag='/li'"><br/></xsl:if><xsl:call-template name="description"><xsl:with-param name="text" select="substring-after($tail, '&gt;')"/></xsl:call-template></xsl:when><xsl:otherwise><xsl:call-template name="entities"><xsl:with-param name="text" select="$text"/></xsl:call-template></xsl:otherwise></xsl:choose>
+</xsl:template>
+<xsl:template name="entities"><xsl:param name="text"/><xsl:choose><xsl:when test="contains($text,'&amp;')"><xsl:value-of select="substring-before($text,'&amp;')"/><xsl:variable name="tail" select="substring-after($text,'&amp;')"/><xsl:choose><xsl:when test="starts-with($tail,'amp;')">&amp;<xsl:call-template name="entities"><xsl:with-param name="text" select="substring($tail,5)"/></xsl:call-template></xsl:when><xsl:when test="starts-with($tail,'lt;')">&lt;<xsl:call-template name="entities"><xsl:with-param name="text" select="substring($tail,4)"/></xsl:call-template></xsl:when><xsl:when test="starts-with($tail,'gt;')">&gt;<xsl:call-template name="entities"><xsl:with-param name="text" select="substring($tail,4)"/></xsl:call-template></xsl:when><xsl:otherwise>&amp;<xsl:call-template name="entities"><xsl:with-param name="text" select="$tail"/></xsl:call-template></xsl:otherwise></xsl:choose></xsl:when><xsl:otherwise><xsl:value-of select="$text"/></xsl:otherwise></xsl:choose></xsl:template>
+</xsl:stylesheet>
+'''
+
+
+def styled_feed(data):
+    """Add a same-origin stylesheet without rewriting any RSS item."""
+    read_feed(data)
+    data = re.sub(br'<\?xml-stylesheet\s[^?]*\?>\s*', b'', data)
+    instruction = b'<?xml-stylesheet type="text/xsl" href="feed.xsl"?>\n'
+    declaration = re.match(br'<\?xml\s[^?]*\?>\s*', data)
+    if declaration:
+        position = declaration.end()
+        return data[:position] + instruction + data[position:]
+    return b'<?xml version="1.0" encoding="utf-8"?>\n' + instruction + data
+
+
+def reader_html(data, feed_url):
+    rows = read_feed(data).values()
+    articles = []
+    for number, row in enumerate(rows, 1):
+        # read_feed checks item shape; validate public identities again for links.
+        if not re.match(r'^https://(?:doi\.org/|arxiv\.org/abs/)', row['link']):
+            raise ValueError('Invalid public article link')
+        articles.append('<article><header><span class="number">' + str(number) + '</span><time>'
+            + escape(row['pubDate']) + '</time></header><h2>' + escape(row['title'])
+            + '</h2><div class="abstract">' + abstract_html(row['description'])
+            + '</div><a class="articleLink" rel="noreferrer" target="_blank" href="'
+            + escape(row['link'], quote=True) + '">阅读原文 ↗</a></article>')
+    url = escape(feed_url, quote=True)
+    return ('<!doctype html>\n<html lang="zh-CN"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<title>ZotWatch · 科研文献订阅</title><link rel="alternate" type="application/rss+xml" href="feed.xml">'
+        '<style>' + READER_CSS + '</style></head><body><main><div class="brand">ZW / ZOTWATCH RESEARCH FEED</div>'
+        '<div class="hero"><h1>让值得读的文献<br>来到你面前。</h1><p>你的科研文献订阅。直接浏览最新推荐，或将下面的链接导入 RSS 阅读器。</p></div>'
+        '<div class="subscribe"><label for="feed-url">RSS 订阅链接 · 选择并复制到阅读器</label>'
+        '<input id="feed-url" readonly value="' + url + '"><nav><a href="feed.xml">打开 RSS XML ↗</a></nav></div>'
+        '<p class="sectionLabel">最近推荐 · ' + str(len(articles)) + ' 篇</p>' + ''.join(articles)
+        + '<footer>ZotWatch · 只展示文献公开信息；推荐更新后，订阅地址保持不变。</footer></main></body></html>\n')
+
+
+def delivery_assets(data, feed_url):
+    data = styled_feed(data)
+    return {"feed.xml": data, "feed.xsl": XSLT.encode(), "index.html": reader_html(data, feed_url).encode()}
+
+
+def record_publication(target, feed_url):
+    """Record only the public subscription destination in the private workspace."""
+    import base64
+    from urllib.error import HTTPError
+    source = os.environ['GITHUB_REPOSITORY']
+    if not REPOSITORY.fullmatch(source) or not REPOSITORY.fullmatch(target):
+        raise ValueError('Invalid repository')
+    path = f'https://api.github.com/repos/{source}/contents/zotwatch-rss.json'
+    value = {'schema_version': 1, 'target_repository': target, 'feed_url': feed_url}
+    existing = None
+    try:
+        existing = json.loads(request(path, os.environ['GITHUB_TOKEN']))
+        if json.loads(base64.b64decode(existing['content'])) == value:
+            return True
+    except HTTPError as error:
+        if error.code != 404:
+            raise
+    body = {'message': 'Record public RSS subscription address',
+            'content': base64.b64encode((json.dumps(value, indent=2) + '\n').encode()).decode()}
+    if existing:
+        body['sha'] = existing['sha']
+    req = Request(path, method='PUT', data=json.dumps(body).encode(), headers={
+        'Authorization': 'Bearer ' + os.environ['GITHUB_TOKEN'], 'Accept': 'application/vnd.github+json',
+        'Content-Type': 'application/json', 'User-Agent': 'ZotWatch-RSS/1.0'})
+    with urlopen(req, timeout=45) as response:
+        response.read(1024 * 1024)
+    return True
+
 def publish(final, target, destination, feed_url):
     if final is None or not final["recommendations"]:
         return {"changed": False, "new_items": 0, "reason": "no_successful_recommendations"}
@@ -453,7 +633,7 @@ def publish(final, target, destination, feed_url):
     if head:
         git("clone", "--depth=1", "--single-branch", "--branch=gh-pages", remote, str(destination))
         files = set(git("ls-files", cwd=destination).splitlines())
-        if files != {"feed.xml", "index.html"}:
+        if files not in ({"feed.xml", "index.html"}, {"feed.xml", "index.html", "feed.xsl"}):
             raise ValueError("Pages branch must contain only RSS allowlisted files")
         if any((destination / name).is_symlink() for name in files):
             raise ValueError("Pages symlink rejected")
@@ -464,11 +644,13 @@ def publish(final, target, destination, feed_url):
         git("remote", "add", "origin", remote, cwd=destination)
         old = None
     data, count = merge_feed(final, old, feed_url)
-    if data == old:
+    assets = delivery_assets(data, feed_url)
+    if all((destination / name).is_file() and (destination / name).read_bytes() == content for name, content in assets.items()):
         return {"changed": False, "new_items": 0, "items": len(read_feed(old))}
-    (destination / "feed.xml").write_bytes(data)
-    (destination / "index.html").write_text(INDEX)
-    git("add", "--", "feed.xml", "index.html", cwd=destination)
+    for name, content in assets.items():
+        (destination / name).write_bytes(content)
+    data = assets['feed.xml']
+    git("add", "--", "feed.xml", "feed.xsl", "index.html", cwd=destination)
     git("-c", "user.name=ZotWatch RSS", "-c", "user.email=rss@users.noreply.github.com",
         "commit", "-m", "Update public paper RSS", cwd=destination)
     # Ordinary fast-forward push: a concurrent publication cannot overwrite us.
@@ -487,9 +669,16 @@ def main():
     if not REPOSITORY.fullmatch(source) or not REPOSITORY.fullmatch(args.target) or not re.fullmatch(r"[1-9]\d*", args.run_id):
         raise ValueError("Invalid repository or run ID")
     owner, name = args.target.split("/")
-    feed_url = f"https://{owner.lower()}.github.io/{name}/feed.xml"
+    feed_url = f"https://{owner.lower()}.github.io/" + ("" if name.lower() == f"{owner.lower()}.github.io" else f"{name}/") + "feed.xml"
     final = load_final(source, args.run_id)
-    print(json.dumps(publish(final, args.target, args.destination, feed_url), sort_keys=True))
+    result = publish(final, args.target, args.destination, feed_url)
+    if 'items' in result:
+        try:
+            result['address_recorded'] = record_publication(args.target, feed_url)
+        except Exception:
+            # A receipt failure must not misreport or roll back successful RSS delivery.
+            result['address_recorded'] = False
+    print(json.dumps(result, sort_keys=True))
 
 
 if __name__ == "__main__":

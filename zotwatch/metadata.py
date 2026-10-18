@@ -32,6 +32,25 @@ def clean(value):
     return value if value and not any(ord(c) < 32 for c in value) else None
 
 
+def abstract_rejection(value):
+    """Conservative metadata check, never manufacture an abstract from body text."""
+    text = clean(value)
+    if not text:
+        return "missing"
+    if re.search(r"\b(author contributions?|conflict of interest|publisher.s note|"
+                 r"data availability statement|the author confirms being the sole contributor)\b", text, re.I):
+        return "body_or_back_matter"
+    if len(text) > 6000:
+        return "overlong_unverified_text"
+    if len(text) < 600 and re.search(r"[,;].*https?:", text, re.I):
+        return "citation_only"
+    return None
+
+
+def verified_abstract(value):
+    return clean(value) if abstract_rejection(value) is None else None
+
+
 def inverted_text(value):
     if not isinstance(value, dict):
         return None
@@ -81,6 +100,9 @@ class Cache:
 
     def get(self, doi, now):
         entry = self.entries.get(doi)
+        # Read legacy caches, but never reuse a contaminated positive entry.
+        if entry and entry.get("abstract") and not verified_abstract(entry["abstract"]):
+            return None
         return entry if entry and datetime.fromisoformat(entry["expires_at"]) > now else None
 
     def save(self):
@@ -146,12 +168,18 @@ def resolve(doi, now, providers, metadata=None, need_abstract=True):
         except Exception:
             metadata = {}
             errors.append("crossref")
-    abstract, source = clean(metadata.get("abstract")), "crossref"
+    raw = metadata.get("abstract")
+    abstract, source = verified_abstract(raw), "crossref"
+    if raw and not abstract:
+        errors.append("crossref:" + abstract_rejection(raw))
     if need_abstract and not abstract:
         for name in ("europe_pmc", "openalex"):
             attempts.append(name)
             try:
-                abstract = getattr(providers, name)(doi)
+                raw = getattr(providers, name)(doi)
+                abstract = verified_abstract(raw)
+                if raw and not abstract:
+                    errors.append(name + ":" + abstract_rejection(raw))
             except Exception:
                 errors.append(name)
             if abstract:
@@ -169,6 +197,10 @@ def enrich(candidates, cache, now=None, providers=None):
     now, providers = now or datetime.now(timezone.utc), providers or Providers()
     grouped, seeds = {}, {}
     for candidate in candidates:
+        rejection = abstract_rejection(candidate.abstract)
+        if rejection not in (None, "missing"):
+            candidate.extra["abstract_rejected_reason"] = rejection
+            candidate.abstract = None
         doi = normalize_doi(candidate.doi)
         if not doi:
             continue

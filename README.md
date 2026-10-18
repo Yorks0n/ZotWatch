@@ -1,6 +1,8 @@
 # ZotWatcher
 
-> 当前开发状态（2026-10-09）：P5C8 staging 已验收，涵盖每用户模型、自动推荐、摘要缓存、发表日期校正及 RSS v4。整理后的本地代码、staging 版本对应关系与验证结果见 [本地封存记录](docs/LOCAL_CODE_SEAL_20261009.md)。生产 rollout 仍为 NO-GO；下文保留早期版本的使用说明。
+> 网页新版日常流程见 [缓存与 Pages 发布](docs/DAILY_PAGES_DELIVERY.md)：单 job 计算、最新状态缓存、独立公开仓库部署页面，不提交每日页面或数据库。
+
+> 当前开发状态（2026-10-09）：P5C9D 每日私有 staging 与新双语 RSS 已通过单次完整 E2E，判断默认 none、翻译默认开启。部署、配置和验收结果见 [P5C9D 报告](docs/P5C9D_DAILY_WORKFLOW_RSS_DEPLOYMENT.md)。Production 保持不变；下文保留早期版本的使用说明。
 
 [English Version](README.en.md)
 
@@ -142,5 +144,11 @@ E2 的 `zotwatch profile|watch` 仍只执行 legacy 三文件配置；v2-only wo
 - **未找到热门期刊补抓**：确保已运行过 `profile --full` 生成 `data/profile.json`。
 - **推荐为空**：检查是否所有候选都超出 7 天窗口或预印本比例被限制；可调节 CLI 的 `--top`、`_filter_recent` 的天数或 `max_ratio`。
 
+## 本地可选 LLM 服务
+
+P5C9 的独立本地翻译与 LLM shadow 判断入口为 `python -m zotwatch.optional_llm`，
+默认关闭，配置和运行方法见 [本地使用说明](docs/P5C9_LOCAL_USAGE.md)。
+
 ## 许可证
+
 本项目采用 [MIT License](LICENSE)。
