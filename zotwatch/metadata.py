@@ -168,6 +168,9 @@ def resolve(doi, now, providers, metadata=None, need_abstract=True):
         except Exception:
             metadata = {}
             errors.append("crossref")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        errors.append("crossref")
     raw = metadata.get("abstract")
     abstract, source = verified_abstract(raw), "crossref"
     if raw and not abstract:

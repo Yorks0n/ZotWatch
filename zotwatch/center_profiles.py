@@ -88,6 +88,9 @@ def enrich(config, source, generation, model, vectors, encoder_cache, cache_path
     """Create all center portraits once per generation; retrieve neighbors per candidate."""
     if not (config.features.shadow.enabled and config.features.shadow.provider != 'none' and config.allow_private_context):
         return source
+    candidates = [row for row in source['candidates'] if verified_abstract(row.get('abstract'))]
+    if not candidates:
+        return source
     records = {r.key: r for r in generation.input_records}
     def paper(key):
         r = records[key]
@@ -129,9 +132,6 @@ def enrich(config, source, generation, model, vectors, encoder_cache, cache_path
         save_json(path, doc)
     from zotwatch.interests.center_recall import encode_candidates
     encode = encode or encode_candidates
-    candidates = source['candidates']
-    if any(not verified_abstract(row.get('abstract')) for row in candidates):
-        raise LLMError('candidate_abstract_required_for_neighbors')
     queries, _ = encode(model, encoder_cache, [dict(id=r['work_key'], title=r['title'],
         abstract=verified_abstract(r['abstract'])) for r in candidates])
     if queries.shape != (len(candidates), 384) or not np.isfinite(queries).all():
@@ -143,4 +143,5 @@ def enrich(config, source, generation, model, vectors, encoder_cache, cache_path
         keys = nearest(center.member_keys, vectors, query, 3)
         enriched.append({**row, 'interest_profile': doc['profiles'][center.interest_id]['description'],
             'nearest_representatives': [paper(key) for key in keys]})
-    return {**source, 'candidates': enriched}
+    by_key = {row['work_key']: row for row in enriched}
+    return {**source, 'candidates': [by_key.get(row['work_key'], row) for row in source['candidates']]}

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from zotwatch.config.loader import _read_yaml
 from zotwatch.abstract_quality import verified_abstract
-from zotwatch.optional_llm import LLMError, LocalConfig, prepare, read_json, save_json, shadow, translate
+from zotwatch.optional_llm import LLMError, LocalConfig, prepare, read_json, refine_metadata, save_json, shadow, translate
 
 SIDECAR = 'rss-ai-v1.json'
 
@@ -53,20 +53,34 @@ def run(config_path, result_path, state, destination, encoder_cache=None):
     generation = state / 'latent-state-v1' / 'generations' / revision
     source = prepare(result_path, state / 'runs' / f"filter-diagnostic-{final['run_id']}.json",
         state / 'metadata-cache-v1.json', generation / 'generation.json', generation / 'model.json')
+    active_quality = config.features.shadow.enabled and config.features.shadow.provider != 'none'
+    if active_quality or (config.features.translation.enabled and config.output_mode != 'english'):
+        from zotwatch.metadata import Cache
+        cache = Cache(state, final['evidence']['workspace_repository_id'])
+        source = refine_metadata(source, cache=cache)
     if config.features.shadow.enabled and config.features.shadow.provider != 'none' and config.allow_private_context:
         from zotwatch.center_profiles import enrich, load_vectors, NAME
         from zotwatch.interests.lifecycle import Generation
         from zotwatch.interests.center_recall_contract import load_center_model
         snapshot = Generation.model_validate(read_json(generation / 'generation.json'))
-        source = enrich(config, source, snapshot, load_center_model(generation / 'model.json'),
-            load_vectors(snapshot, generation), encoder_cache, state / NAME)
+        try:
+            source = enrich(config, source, snapshot, load_center_model(generation / 'model.json'),
+                load_vectors(snapshot, generation), encoder_cache, state / NAME)
+        except LLMError:
+            # A quality service failure must not prevent independent translation.
+            source['candidates'] = [{**row, 'quality_skip_reason': 'quality_context_unavailable'}
+                for row in source['candidates']]
     sidecar, quality, translations = integrate(config, source, final, state / 'optional-ai-cache-v1')
     save_json(destination / SIDECAR, sidecar)
     save_json(destination / 'ai' / 'quality-filter.json', quality)
     save_json(destination / 'ai' / 'translations.json', translations)
+    repairs = source.get('metadata_repairs', [])
+    save_json(destination / 'ai' / 'metadata-repairs.json', repairs)
     summary = dict(status='evaluated', before_count=quality['before_count'], after_count=quality['after_count'],
         fallback_original_top20=quality['fallback_original_top20'], quality=quality['metadata'],
-        translation=translations['metadata'], original_result_unchanged=True)
+        translation=translations['metadata'], translation_status_counts=translations['status_counts'],
+        metadata_repair_counts={status: sum(r['status'] == status for r in repairs)
+            for status in ('replaced', 'no_verified_abstract')}, original_result_unchanged=True)
     save_json(destination / 'ai' / 'summary.json', summary)
     return summary
 

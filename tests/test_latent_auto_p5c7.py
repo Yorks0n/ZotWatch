@@ -89,6 +89,18 @@ def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, mon
     assert again.status=='succeeded' and again.evidence.interest_model_revision==revision
     evidence=json.loads((paths.state/'runs'/f'filter-diagnostic-{again.run_id}.json').read_text())
     assert evidence['lifecycle_gate'].startswith('reuse_')
+    # AI delivery retains the source abstract even when it has no DOI cache entry.
+    assert evidence['candidates']['10.1234/plant']['abstract'] == 'real semantic text'
+    from zotwatch.optional_llm import prepare
+    metadata_path = paths.state/'metadata-cache-v1.json'
+    metadata = json.loads(metadata_path.read_text())
+    metadata['entries'].pop('10.1234/plant', None)
+    metadata_path.write_text(json.dumps(metadata))
+    generation = paths.state/'latent-state-v1'/'generations'/revision
+    prepared = prepare(paths.state/'runs'/f'latent-auto-{again.run_id}.json',
+        paths.state/'runs'/f'filter-diagnostic-{again.run_id}.json', metadata_path,
+        generation/'generation.json', generation/'model.json')
+    assert prepared['candidates'][0]['abstract'] == 'real semantic text'
     invalid=result.model_dump();invalid['confirmed_profile_revision']='f'*40
     with pytest.raises(ValueError):AutoRunResult.model_validate(invalid)
     sidecar=json.loads((target/'latent-deployment-evidence-v1.json').read_text())

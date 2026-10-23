@@ -344,8 +344,8 @@ def cleanup_translation(text):
     return text
 
 
-def refine_metadata(source, *, providers=None, now=None):
-    """Repair only suspect final-paper metadata in an independent local input."""
+def refine_metadata(source, *, providers=None, now=None, cache=None):
+    """Repair missing/suspect final abstracts, reusing completed provider lookups."""
     from copy import deepcopy
     from zotwatch.metadata import Providers, resolve, normalize_doi
     result = deepcopy(source)
@@ -355,14 +355,24 @@ def refine_metadata(source, *, providers=None, now=None):
     originals = [r for r in result["translations"] if r.get("final_recommended")]
     for row in originals:
         reason = abstract_rejection(row.get("abstract"))
-        if reason in (None, "missing"):
+        if reason is None:
             continue
         doi = normalize_doi(row["work_key"])
-        entry = resolve(doi, now, providers) if doi else {}
+        entry = cache.get(doi, now) if cache is not None and doi else None
+        cache_hit = bool(entry and (entry.get("abstract") or
+            entry.get("abstract_status") == "not_found" or "openalex" in entry.get("attempts", [])))
+        if not cache_hit:
+            try:
+                entry = resolve(doi, now, providers) if doi else {}
+            except (OSError, ValueError, TypeError, KeyError):
+                entry = {}
+            if cache is not None and doi and entry:
+                cache.entries[doi] = entry
+        entry = entry or {}
         replacement = verified_abstract(entry.get("abstract")) or ""
         repairs.append(dict(work_key=row["work_key"], rejected_source=row.get("abstract_source"),
             rejection_reason=reason, rejected_chars=len(row.get("abstract") or ""),
-            rejected_sha256=fingerprint(row.get("abstract")), replacement_chars=len(replacement),
+            rejected_sha256=fingerprint(row.get("abstract")), cache_hit=cache_hit, replacement_chars=len(replacement),
             replacement_source=entry.get("abstract_source"), attempts=entry.get("attempts", []),
             unavailable_or_rejected_sources=entry.get("unavailable_providers", []),
             status="replaced" if replacement else "no_verified_abstract"))
@@ -374,6 +384,8 @@ def refine_metadata(source, *, providers=None, now=None):
     result["contexts"] = {k: v for k, v in result["contexts"].items() if k in used}
     result["metadata_repairs"] = repairs
     result["sample_policy"] = "original final Top 20 only; unchanged order"
+    if cache is not None:
+        cache.save()
     return result
 
 
@@ -383,19 +395,25 @@ def translate(config, papers, cache_path, *, mode="bilingual", client_factory=Co
     inputs = [dict(id=r["work_key"], title=r["title"], abstract=r.get("abstract") or "") for r in papers]
     if len({r["id"] for r in inputs}) != len(inputs):
         raise ValueError("duplicate paper identity")
-    # Some upstream "abstracts" contain body text. Keep the full local original,
-    # explicitly flag it, and send only the title until the source is reviewed.
+    # A missing/unverified abstract skips this paper without consuming API budget.
     review = {r["id"] for r in inputs if abstract_rejection(r["abstract"]) not in (None, "missing")}
-    payloads = [{**r, "abstract": "" if r["id"] in review else r["abstract"]} for r in inputs]
+    skipped = {r["id"] for r in inputs if not verified_abstract(r["abstract"])}
+    payloads = [r for r in inputs if r["id"] not in skipped]
     if mode == "english":
         values, status, metadata = {}, "english", dict(provider=None, model=None,
             prompt_version=TRANSLATION_VERSION, requests=0, cache_hits=0, retries=0, failed_attempts=0)
-    else:
+    elif payloads:
         values, status, metadata = evaluate_batches(config, "translation", payloads, cache_path,
                                                    client_factory=client_factory)
+    else:
+        status = "no_verified_abstract" if config.features.translation.enabled else "disabled"
+        values, metadata = {}, dict(provider=None, model=None,
+            prompt_version=TRANSLATION_VERSION, requests=0, cache_hits=0, retries=0, failed_attempts=0)
     rows = []
     for row in inputs:
         result = values.get(row["id"], {"status": status})
+        if mode != "english" and config.features.translation.enabled and row["id"] in skipped:
+            result = {"status": "source_text_requires_review" if row["id"] in review else "no_verified_abstract"}
         translated = result.get("result", {})
         needs_review = row["id"] in review and mode != "english"
         rows.append(dict(work_key=row["id"], title_en=row["title"], abstract_en=row["abstract"],
@@ -418,9 +436,14 @@ def shadow(config, papers, contexts, cache_path, *, client_factory=CompatibleCli
     if [r["latent_auto_rank"] for r in papers] != sorted(r["latent_auto_rank"] for r in papers):
         raise ValueError("Top 20 must retain original order")
     route = config.features.shadow
+    skipped = {}
     if route.enabled and route.provider != "none" and config.allow_private_context:
         inputs = []
         for row in papers:
+            reason = row.get("quality_skip_reason")
+            if reason or not verified_abstract(row.get("abstract")):
+                skipped[row["work_key"]] = reason or "no_verified_abstract"
+                continue
             context = row.get("nearest_representatives") or contexts.get(row["primary_center_id"])
             if not context:
                 raise ValueError("missing representative context")
@@ -441,11 +464,14 @@ def shadow(config, papers, contexts, cache_path, *, client_factory=CompatibleCli
     rows = []
     for row in papers:
         response = values.get(row["work_key"], {"status": status})
+        if row["work_key"] in skipped:
+            response = {"status": skipped[row["work_key"]]}
         judgment = response.get("result", dict(decision="keep" if status == "disabled" else "review", relevance="uncertain",
             contribution="unclear", reason="AI 判断关闭，保留原推荐。" if status == "disabled" else "未获得有效判断，保留原推荐：" + response["status"]))
         rows.append({**row, **{k: v for k, v in judgment.items() if k != "id"},
                      "llm_status": response["status"]})
-    fallback = status != "disabled" and any(r["llm_status"] not in {"succeeded", "cached"} for r in rows)
+    fallback = status != "disabled" and any(
+        r["llm_status"] not in {"succeeded", "cached", "no_verified_abstract"} for r in rows)
     excluded = [] if fallback else [r for r in rows if r["decision"] == "exclude"]
     filtered = list(papers) if fallback else [r for r in papers if r["work_key"] not in {e["work_key"] for e in excluded}]
     return dict(schema_name="zotwatch-local-top20-quality-filter", schema_version=2,
@@ -497,7 +523,9 @@ def prepare(result_path, diagnostic_path, metadata_path, generation_path, model_
         if (decision["threshold"] != .55 or decision["interest_model_revision"] != generation.model_revision or
             match["interest_id"] != row["primary_center_id"] or match["center_cosine"] != row["center_cosine"]):
             raise ValueError("candidate recall evidence mismatch")
-        abstract = clean(metadata.get(ident, {}).get("abstract")) or ""
+        # Some providers supply valid abstracts without needing a DOI cache lookup.
+        original = diagnostic.get("candidates", {}).get(ident, {})
+        abstract = verified_abstract(original.get("abstract")) or clean(metadata.get(ident, {}).get("abstract")) or ""
         rows.append(dict(work_key=ident, title=clean(row["title"]) or row["title"], abstract=abstract,
             primary_center_id=row["primary_center_id"], center_cosine=row["center_cosine"],
             latent_auto_rank=rank, final_recommended=ident in final, final_rank=final.get(ident),

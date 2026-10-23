@@ -53,6 +53,7 @@ class FilterDiagnostic:
         self.works = unique
         for ident, work in unique.items():
             self.data["candidates"][ident] = {"title": work.title, "venue": work.venue,
+                "abstract": work.abstract,
                 "source": work.source, "fetch_path": work.extra.get("source", "public_api"),
                 "group": group(work), "published": work.extra.get("publication_date") or (work.published.isoformat() if work.published else None),
                 **{k:work.extra[k] for k in ("publication_precision","publication_source","doi_created_at","abstract_source","abstract_status","fetched_at","metadata_cache_hit") if k in work.extra}}
