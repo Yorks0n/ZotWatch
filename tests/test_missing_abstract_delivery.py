@@ -181,7 +181,8 @@ def test_missing_abstract_skips_neighbors_and_quality_without_disabling_valid_ex
         tmp_path/"no-profiles", encode=no_client, client_factory=no_client)["candidates"] == rows[:1]
 
 
-@pytest.mark.parametrize("provider", ["none", "llm", "jev", "portrait_failure"])
+@pytest.mark.parametrize("provider", ["none", "llm", "jev", "portrait_failure",
+    "portrait_value_error", "portrait_missing_file"])
 def test_daily_run_repairs_then_translates_and_publishes_other_papers(tmp_path, monkeypatch, provider):
     inputs = source()
     final = dict(run_id="a"*32, status="succeeded", command="watch",
@@ -190,8 +191,9 @@ def test_daily_run_repairs_then_translates_and_publishes_other_papers(tmp_path, 
     result_path = tmp_path/"result.json"
     result_path.write_text(json.dumps(final))
     doc = configuration().model_dump()
-    doc["features"]["shadow"] = dict(enabled=provider != "none", provider="llm" if provider == "portrait_failure" else provider,
-        **(dict(service="judge") if provider in {"llm", "portrait_failure"} else {}))
+    portrait_failure = provider.startswith("portrait_")
+    doc["features"]["shadow"] = dict(enabled=provider != "none", provider="llm" if portrait_failure else provider,
+        **(dict(service="judge") if provider == "llm" or portrait_failure else {}))
     doc["output_mode"] = "chinese"
     config = llm.LocalConfig.model_validate(doc)
     config_path = tmp_path/"config.json"
@@ -211,6 +213,10 @@ def test_daily_run_repairs_then_translates_and_publishes_other_papers(tmp_path, 
             assert repaired["candidates"][0]["abstract"] == "Recovered public abstract."
             if provider == "portrait_failure":
                 raise llm.LLMError("api_unavailable")
+            if provider == "portrait_value_error":
+                raise ValueError("Invalid optional profile cache")
+            if provider == "portrait_missing_file":
+                raise FileNotFoundError("Missing optional vectors")
             return repaired
 
         monkeypatch.setattr(center_profiles, "enrich", enrich)
@@ -248,7 +254,7 @@ def test_daily_run_repairs_then_translates_and_publishes_other_papers(tmp_path, 
     assert summary["status"] == "evaluated"
     assert summary["translation_status_counts"] == {"succeeded": 2, "no_verified_abstract": 1}
     assert summary["metadata_repair_counts"] == {"replaced": 1, "no_verified_abstract": 1}
-    assert summary["fallback_original_top20"] == (provider == "portrait_failure")
+    assert summary["fallback_original_top20"] == portrait_failure
     assert len(sent) == 2 and all(r["abstract"] for r in sent)
     sidecar = json.loads((tmp_path/"delivery"/staging_ai.SIDECAR).read_text())
     assert sidecar["papers"][1]["title_zh"] is None

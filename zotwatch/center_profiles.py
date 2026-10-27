@@ -88,7 +88,8 @@ def enrich(config, source, generation, model, vectors, encoder_cache, cache_path
     """Create all center portraits once per generation; retrieve neighbors per candidate."""
     if not (config.features.shadow.enabled and config.features.shadow.provider != 'none' and config.allow_private_context):
         return source
-    candidates = [row for row in source['candidates'] if verified_abstract(row.get('abstract'))]
+    candidates = [row for row in source['candidates']
+        if not row.get('quality_skip_reason') and verified_abstract(row.get('abstract'))]
     if not candidates:
         return source
     records = {r.key: r for r in generation.input_records}
