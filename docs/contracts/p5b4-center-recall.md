@@ -28,8 +28,12 @@ explanations; there is no per-candidate historical-member scan.
 
 `center_recall.recall_candidates(model_path, cache_dir, candidates)` encodes with
 the same pinned MiniLM snapshot and unchanged title + newline + abstract,
-normalized-chunk/mean/final-L2 policy. Missing candidate abstracts have no title
-fallback. Encoder artifact identity is checked before offline local inference.
+normalized-chunk/mean/final-L2 policy. Candidates do not require an abstract:
+when the abstract is missing, empty or whitespace-only, the title
+alone is encoded and evaluated against the same centroid threshold. Only
+candidates with neither title nor abstract text are excluded as
+`insufficient_semantic_text`. Title + abstract inputs keep their existing
+encoding. Encoder artifact identity is checked before offline local inference.
 
 `CenterRecallIndex(model).recall(ids, vectors, embedding_text_fingerprint=...)`
 validates normalized candidate vectors and the expected fingerprint, then

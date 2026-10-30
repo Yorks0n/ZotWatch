@@ -38,7 +38,8 @@ def test_rank_uses_best_cosine_without_topic_or_secondary_sum():
 
 
 @pytest.mark.parametrize('old_profile',['absent','all_muted'])
-def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, monkeypatch, tmp_path, old_profile):
+@pytest.mark.parametrize('candidate_abstract', ['real semantic text', None])
+def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, monkeypatch, tmp_path, old_profile, candidate_abstract):
     paths,effective,_,_=pipeline
     from .helpers import FixedVectors
     import numpy as np
@@ -59,10 +60,13 @@ def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, mon
     if old_profile=='all_muted':
         from .test_interests_p5b1 import profile,commit_profile
         value=profile();value['library_scope']['id']='123456';value['interests'][0]['status']='muted';commit_profile(paths.workspace,value)
-    candidates=[candidate('plant',doi='10.1234/plant',abstract='real semantic text',published=datetime.now(timezone.utc)),
+    candidates=[candidate('plant',doi='10.1234/plant',abstract=candidate_abstract,published=datetime.now(timezone.utc)),
         candidate('old',abstract='text',published=datetime(2020,1,1,tzinfo=timezone.utc))]
     candidates[0].venue="Plant Physiology"
-    candidates[0].extra["crossref_metadata"] = {"DOI":"10.1234/plant", "abstract":"real semantic text", "published-online":{"date-parts":[[int(x) for x in datetime.now(timezone.utc).date().isoformat().split("-")]]}}
+    candidates[0].extra["crossref_metadata"] = {"DOI":"10.1234/plant", "abstract":candidate_abstract, "published-online":{"date-parts":[[int(x) for x in datetime.now(timezone.utc).date().isoformat().split("-")]]}}
+    from zotwatch.metadata import Providers
+    monkeypatch.setattr(Providers, 'europe_pmc', lambda self, doi: None)
+    monkeypatch.setattr(Providers, 'openalex', lambda self, doi: None)
     install_collection(monkeypatch,candidates)
     monkeypatch.setattr(recall_integration,'encode_candidates',fake_encode)
     args=integrated_args(latent_lifecycle='per-user-v1',latent_encoder_cache='unused');args.full=False
@@ -90,7 +94,7 @@ def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, mon
     evidence=json.loads((paths.state/'runs'/f'filter-diagnostic-{again.run_id}.json').read_text())
     assert evidence['lifecycle_gate'].startswith('reuse_')
     # AI delivery retains the source abstract even when it has no DOI cache entry.
-    assert evidence['candidates']['10.1234/plant']['abstract'] == 'real semantic text'
+    assert evidence['candidates']['10.1234/plant']['abstract'] == candidate_abstract
     from zotwatch.optional_llm import prepare
     metadata_path = paths.state/'metadata-cache-v1.json'
     metadata = json.loads(metadata_path.read_text())
@@ -100,7 +104,7 @@ def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, mon
     prepared = prepare(paths.state/'runs'/f'latent-auto-{again.run_id}.json',
         paths.state/'runs'/f'filter-diagnostic-{again.run_id}.json', metadata_path,
         generation/'generation.json', generation/'model.json')
-    assert prepared['candidates'][0]['abstract'] == 'real semantic text'
+    assert prepared['candidates'][0]['abstract'] == (candidate_abstract or '')
     invalid=result.model_dump();invalid['confirmed_profile_revision']='f'*40
     with pytest.raises(ValueError):AutoRunResult.model_validate(invalid)
     sidecar=json.loads((target/'latent-deployment-evidence-v1.json').read_text())
@@ -121,7 +125,7 @@ def test_normal_watch_bootstraps_without_reading_confirmed_profile(pipeline, mon
     monkeypatch.setattr(rss,'github',github);monkeypatch.setattr(rss,'request',lambda *a:archive);monkeypatch.setenv('GITHUB_TOKEN','unused')
     loaded=rss.load_final('owner/private',99)
     assert loaded==result.model_dump()
-    feed,n=rss.merge_feed(loaded,None,'https://example.com/feed.xml',datetime.now(timezone.utc),resolve=lambda _: 'Public abstract')
+    feed,n=rss.merge_feed(loaded,None,'https://example.com/feed.xml',datetime.now(timezone.utc),resolve=lambda _: 'Public abstract' if candidate_abstract else '')
     assert n==1 and len(rss.read_feed(feed))==1
     assert revision.encode() not in feed
 

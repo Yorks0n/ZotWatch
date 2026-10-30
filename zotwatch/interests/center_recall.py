@@ -50,9 +50,12 @@ class CenterRecallIndex:
 
 def _semantic_text(record):
     title, abstract = record.get("title"), record.get("abstract")
-    if not isinstance(title, str) or not isinstance(abstract, str) or not abstract.strip():
-        raise ValueError("insufficient_semantic_text: candidate abstract required")
-    return title.strip() + "\n" + abstract.strip()
+    if not isinstance(title, str) or (abstract is not None and not isinstance(abstract, str)):
+        raise ValueError("insufficient_semantic_text: invalid candidate text")
+    title, abstract = title.strip(), (abstract or "").strip()
+    if not title and not abstract:
+        raise ValueError("insufficient_semantic_text: candidate title or abstract required")
+    return title + "\n" + abstract if abstract else title
 
 
 def encode_candidates(model, cache_dir, candidates):
