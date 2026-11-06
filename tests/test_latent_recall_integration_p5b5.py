@@ -157,20 +157,47 @@ def test_encoder_incompatibility_stops_revision_before_ranking(pipeline, monkeyp
     assert result.recommendations == []
 
 
-def test_missing_abstract_duplicate_and_empty_pool(pipeline, monkeypatch):
+@pytest.mark.parametrize("abstract", [None, "", " \n\t"])
+def test_missing_abstract_duplicate_and_empty_pool(pipeline, monkeypatch, abstract):
     paths, effective, m, path = pipeline
-    collected = works(); collected[1].abstract = None
+    collected = works(); collected[1].abstract = abstract
     install_collection(monkeypatch, collected + collected[:1])
-    install_encoding(monkeypatch, m, [[1., 0.]])
+    observed = []
+    def encode(loaded, cache, records):
+        observed.extend(records)
+        return unit([[1., 0.], [1., 0.]]), {"embedding_text_fingerprint": m.embedding_text_fingerprint}
+    monkeypatch.setattr(recall_integration, "encode_candidates", encode)
     result = runner.run(integrated_args(), paths, effective, ranker=ranking)
     assert result.status == "succeeded"
     assert len(result.evidence.recall_decisions) == 2
-    assert result.evidence.recall_decisions[1].qualification == "insufficient_semantic_text"
+    assert result.evidence.recall_decisions[1].qualification == "recalled"
+    assert len(result.recommendations) == 2
+    assert [r["title"] for r in observed] == [c.title for c in collected]
+    assert observed[1]["abstract"] == abstract
+    assert collected[1].abstract == abstract
     install_collection(monkeypatch, [])
     install_encoding(monkeypatch, m, [])
     empty = runner.run(integrated_args(), paths, effective, ranker=ranking)
     assert empty.status == "succeeded" and empty.recommendations == []
     assert empty.evidence.latent_recall.interest_model_revision == m.interest_model_revision
+
+
+def test_title_only_candidates_still_need_center_similarity(pipeline, monkeypatch):
+    _, _, m, path = pipeline
+    collected = works()
+    for c in collected:
+        c.abstract = None
+    no_text = candidate("no-text", abstract=None)
+    no_text.title = " \t"
+    install_encoding(monkeypatch, m, [[1., 0.], [0., 1.]])
+    runtime = recall_integration.LatentRecallRuntime(path, "offline-cache")
+    recalled, decisions = runtime.recall(collected + [no_text])
+    assert recalled == collected[:1]
+    assert [row["qualification"] for row in decisions] == [
+        "recalled", "below_threshold", "insufficient_semantic_text",
+    ]
+    assert decisions[0]["best_match"]["center_cosine"] == 1.
+    assert decisions[1]["best_match"] is None
 
 
 def test_profile_snapshot_is_fixed_during_collection_and_muted_topic_never_ranks(pipeline, monkeypatch):

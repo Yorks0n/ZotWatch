@@ -265,7 +265,7 @@ def evaluate_batches(config, feature, records, cache_path, *, client_factory=Com
     if cache_path.is_file():
         try:
             doc = read_json(cache_path)
-            if doc.get("schema_name") == "zotwatch-local-llm-cache" and doc.get("schema_version") == 1:
+            if isinstance(doc, dict) and doc.get("schema_name") == "zotwatch-local-llm-cache" and doc.get("schema_version") == 1:
                 cache = doc["entries"] if isinstance(doc.get("entries"), dict) else {}
         except (ValueError, OSError):
             pass
@@ -324,8 +324,12 @@ def evaluate_batches(config, feature, records, cache_path, *, client_factory=Com
                 results[row["id"]] = {"status": code}
     if any(v["status"] == "succeeded" for v in results.values()):
         # Bounded success-only cache; failures can be retried on the next run.
-        cache = dict(sorted(cache.items(), key=lambda kv: kv[1].get("recorded_at", ""), reverse=True)[:2000])
-        save_json(cache_path, dict(schema_name="zotwatch-local-llm-cache", schema_version=1, entries=cache))
+        cache = dict(sorted(((k, v) for k, v in cache.items() if isinstance(v, dict)),
+            key=lambda kv: str(kv[1].get("recorded_at", "")), reverse=True)[:2000])
+        try:
+            save_json(cache_path, dict(schema_name="zotwatch-local-llm-cache", schema_version=1, entries=cache))
+        except (OSError, ValueError):
+            metadata["cache_write_failed"] = True
     return results, "evaluated", metadata
 
 
@@ -344,8 +348,8 @@ def cleanup_translation(text):
     return text
 
 
-def refine_metadata(source, *, providers=None, now=None):
-    """Repair only suspect final-paper metadata in an independent local input."""
+def refine_metadata(source, *, providers=None, now=None, cache=None):
+    """Repair missing/suspect final abstracts, reusing completed provider lookups."""
     from copy import deepcopy
     from zotwatch.metadata import Providers, resolve, normalize_doi
     result = deepcopy(source)
@@ -355,14 +359,24 @@ def refine_metadata(source, *, providers=None, now=None):
     originals = [r for r in result["translations"] if r.get("final_recommended")]
     for row in originals:
         reason = abstract_rejection(row.get("abstract"))
-        if reason in (None, "missing"):
+        if reason is None:
             continue
         doi = normalize_doi(row["work_key"])
-        entry = resolve(doi, now, providers) if doi else {}
+        entry = cache.get(doi, now) if cache is not None and doi else None
+        cache_hit = bool(entry and (entry.get("abstract") or
+            entry.get("abstract_status") == "not_found" or "openalex" in entry.get("attempts", [])))
+        if not cache_hit:
+            try:
+                entry = resolve(doi, now, providers) if doi else {}
+            except (OSError, ValueError, TypeError, KeyError):
+                entry = {}
+            if cache is not None and doi and entry:
+                cache.entries[doi] = entry
+        entry = entry or {}
         replacement = verified_abstract(entry.get("abstract")) or ""
         repairs.append(dict(work_key=row["work_key"], rejected_source=row.get("abstract_source"),
             rejection_reason=reason, rejected_chars=len(row.get("abstract") or ""),
-            rejected_sha256=fingerprint(row.get("abstract")), replacement_chars=len(replacement),
+            rejected_sha256=fingerprint(row.get("abstract")), cache_hit=cache_hit, replacement_chars=len(replacement),
             replacement_source=entry.get("abstract_source"), attempts=entry.get("attempts", []),
             unavailable_or_rejected_sources=entry.get("unavailable_providers", []),
             status="replaced" if replacement else "no_verified_abstract"))
@@ -374,6 +388,11 @@ def refine_metadata(source, *, providers=None, now=None):
     result["contexts"] = {k: v for k, v in result["contexts"].items() if k in used}
     result["metadata_repairs"] = repairs
     result["sample_policy"] = "original final Top 30 only; unchanged order"
+    if cache is not None:
+        try:
+            cache.save()
+        except (OSError, ValueError):
+            result.setdefault("preparation_warnings", []).append("AI_METADATA_CACHE_WRITE_FAILED")
     return result
 
 
@@ -383,19 +402,25 @@ def translate(config, papers, cache_path, *, mode="bilingual", client_factory=Co
     inputs = [dict(id=r["work_key"], title=r["title"], abstract=r.get("abstract") or "") for r in papers]
     if len({r["id"] for r in inputs}) != len(inputs):
         raise ValueError("duplicate paper identity")
-    # Some upstream "abstracts" contain body text. Keep the full local original,
-    # explicitly flag it, and send only the title until the source is reviewed.
+    # A missing/unverified abstract skips this paper without consuming API budget.
     review = {r["id"] for r in inputs if abstract_rejection(r["abstract"]) not in (None, "missing")}
-    payloads = [{**r, "abstract": "" if r["id"] in review else r["abstract"]} for r in inputs]
+    skipped = {r["id"] for r in inputs if not verified_abstract(r["abstract"])}
+    payloads = [r for r in inputs if r["id"] not in skipped]
     if mode == "english":
         values, status, metadata = {}, "english", dict(provider=None, model=None,
             prompt_version=TRANSLATION_VERSION, requests=0, cache_hits=0, retries=0, failed_attempts=0)
-    else:
+    elif payloads:
         values, status, metadata = evaluate_batches(config, "translation", payloads, cache_path,
                                                    client_factory=client_factory)
+    else:
+        status = "no_verified_abstract" if config.features.translation.enabled else "disabled"
+        values, metadata = {}, dict(provider=None, model=None,
+            prompt_version=TRANSLATION_VERSION, requests=0, cache_hits=0, retries=0, failed_attempts=0)
     rows = []
     for row in inputs:
         result = values.get(row["id"], {"status": status})
+        if mode != "english" and config.features.translation.enabled and row["id"] in skipped:
+            result = {"status": "source_text_requires_review" if row["id"] in review else "no_verified_abstract"}
         translated = result.get("result", {})
         needs_review = row["id"] in review and mode != "english"
         rows.append(dict(work_key=row["id"], title_en=row["title"], abstract_en=row["abstract"],
@@ -418,12 +443,18 @@ def shadow(config, papers, contexts, cache_path, *, client_factory=CompatibleCli
     if [r["latent_auto_rank"] for r in papers] != sorted(r["latent_auto_rank"] for r in papers):
         raise ValueError("Top 30 must retain original order")
     route = config.features.shadow
+    skipped = {}
     if route.enabled and route.provider != "none" and config.allow_private_context:
         inputs = []
         for row in papers:
+            reason = row.get("quality_skip_reason")
+            if reason or not verified_abstract(row.get("abstract")):
+                skipped[row["work_key"]] = reason or "no_verified_abstract"
+                continue
             context = row.get("nearest_representatives") or contexts.get(row["primary_center_id"])
             if not context:
-                raise ValueError("missing representative context")
+                skipped[row["work_key"]] = "quality_context_unavailable"
+                continue
             abstract = verified_abstract(row.get("abstract")) or ""
             inputs.append(dict(id=row["work_key"], title=row["title"],
                 abstract=abstract[:3000], abstract_truncated=len(abstract) > 3000,
@@ -441,11 +472,14 @@ def shadow(config, papers, contexts, cache_path, *, client_factory=CompatibleCli
     rows = []
     for row in papers:
         response = values.get(row["work_key"], {"status": status})
+        if row["work_key"] in skipped:
+            response = {"status": skipped[row["work_key"]]}
         judgment = response.get("result", dict(decision="keep" if status == "disabled" else "review", relevance="uncertain",
             contribution="unclear", reason="AI 判断关闭，保留原推荐。" if status == "disabled" else "未获得有效判断，保留原推荐：" + response["status"]))
         rows.append({**row, **{k: v for k, v in judgment.items() if k != "id"},
                      "llm_status": response["status"]})
-    fallback = status != "disabled" and any(r["llm_status"] not in {"succeeded", "cached"} for r in rows)
+    fallback = status != "disabled" and any(
+        r["llm_status"] not in {"succeeded", "cached", "no_verified_abstract"} for r in rows)
     excluded = [] if fallback else [r for r in rows if r["decision"] == "exclude"]
     filtered = list(papers) if fallback else [r for r in papers if r["work_key"] not in {e["work_key"] for e in excluded}]
     return dict(schema_name="zotwatch-local-top20-quality-filter", schema_version=2,
@@ -457,66 +491,101 @@ def shadow(config, papers, contexts, cache_path, *, client_factory=CompatibleCli
 
 
 def prepare(result_path, diagnostic_path, metadata_path, generation_path, model_path):
-    """Read saved P5C8 evidence and exact generation; no sync, encoding, or network."""
+    """Project authoritative recommendations; optional evidence never reranks them."""
     from zotwatch.interests.auto_results import AutoRunResult
-    from zotwatch.interests.auto_ranking import select
     from zotwatch.interests.center_recall_contract import load_center_model
     from zotwatch.interests.lifecycle import Generation
+    from zotwatch.metadata import Cache
 
     run = AutoRunResult.model_validate(read_json(result_path))
     if run.status != "succeeded" or run.command != "watch" or not run.recommendations:
         raise ValueError("need successful latent-auto watch result")
-    diagnostic = read_json(diagnostic_path)
-    generation = Generation.model_validate(read_json(generation_path))
-    model = load_center_model(model_path)
     evidence = run.evidence
-    if (diagnostic["run_id"] != run.run_id or generation.model_revision != evidence.interest_model_revision or
-        generation.library_identity_sha256 != evidence.library_identity_sha256 or
-        generation.workspace_repository_id != evidence.workspace_repository_id or
-        model.interest_model_revision != generation.model_revision or
-        model.source_snapshot_sha256 != generation.input_sha256 or
-        generation.model_sha256 != sha256(Path(model_path).read_bytes()).hexdigest() or
-        model.embedding_text_fingerprint != evidence.embedding_text_fingerprint or model.threshold != .55 or
-        set(c.interest_id for c in generation.centers) != set(evidence.formal_center_ids) or
-        set(c.interest_id for c in model.centers) != set(evidence.formal_center_ids)):
-        raise ValueError("run/model/generation evidence mismatch")
-    cache = read_json(metadata_path)
-    if cache["workspace_repository_id"] != evidence.workspace_repository_id:
-        raise ValueError("metadata scope mismatch")
-    metadata = cache["entries"]
-    decisions = {r["candidate_id"]: r for r in diagnostic["recall_decisions"] if r["recalled"]}
-    final = {r.work_key: i for i, r in enumerate(run.recommendations, 1)}
-    ordered = select(diagnostic["admitted_ranking"], limit=None)
-    if [r["work_key"] for r in ordered[:len(final)]] != list(final):
-        raise ValueError("saved admitted ranking differs from final recommendations")
+    warnings, hashes = [], {}
+
+    def optional(path, code):
+        try:
+            data = Path(path).read_bytes()
+            value = json.loads(data)
+            if not isinstance(value, dict):
+                raise ValueError("not an object")
+            hashes[str(path)] = sha256(data).hexdigest()
+            return value
+        except (OSError, ValueError):
+            warnings.append(code)
+            return {}
+
+    diagnostic = optional(diagnostic_path, "AI_DIAGNOSTIC_UNAVAILABLE")
+    if diagnostic.get("run_id") != run.run_id:
+        diagnostic = {}
+        warnings.append("AI_DIAGNOSTIC_SCOPE_MISMATCH")
+    try:
+        metadata = Cache.validate(Path(metadata_path).read_bytes(), evidence.workspace_repository_id)["entries"]
+    except (OSError, ValueError, TypeError, KeyError):
+        metadata = {}
+        warnings.append("AI_METADATA_CACHE_UNAVAILABLE")
+
+    contexts, quality_ready = {}, False
+    try:
+        generation = Generation.model_validate(read_json(generation_path))
+        model = load_center_model(model_path)
+        if (generation.model_revision != evidence.interest_model_revision or
+            generation.library_identity_sha256 != evidence.library_identity_sha256 or
+            generation.workspace_repository_id != evidence.workspace_repository_id or
+            model.interest_model_revision != generation.model_revision or
+            model.source_snapshot_sha256 != generation.input_sha256 or
+            generation.model_sha256 != sha256(Path(model_path).read_bytes()).hexdigest() or
+            model.embedding_text_fingerprint != evidence.embedding_text_fingerprint or model.threshold != .55 or
+            set(c.interest_id for c in generation.centers) != set(evidence.formal_center_ids) or
+            set(c.interest_id for c in model.centers) != set(evidence.formal_center_ids)):
+            raise ValueError("quality evidence mismatch")
+        quality_ready = True
+        records = {r.key: r for r in generation.input_records}
+        used = {r.primary_center_id for r in run.recommendations}
+        for center in generation.centers:
+            if center.interest_id in used:
+                contexts[center.interest_id] = [dict(title=clean(records[k].title) or "",
+                    abstract=clean(records[k].abstract) or "") for k in center.representative_items[:3]]
+    except (OSError, ValueError, KeyError, TypeError):
+        quality_ready, contexts = False, {}
+        warnings.append("AI_QUALITY_EVIDENCE_UNAVAILABLE")
+
+    recall = diagnostic.get("recall_decisions")
+    decisions = {r["candidate_id"]: r for r in (recall if isinstance(recall, list) else [])
+        if isinstance(r, dict) and r.get("recalled") and "candidate_id" in r}
+    candidates = diagnostic.get("candidates", {})
+    if not isinstance(candidates, dict):
+        candidates = {}
     rows = []
-    for rank, row in enumerate(ordered, 1):
+    # The engine already applied diversification and preprint admission in order.
+    # Repeating selection on the filtered pool can change both order and membership.
+    for rank, recommendation in enumerate(run.recommendations, 1):
+        row = recommendation.model_dump()
         ident = row["work_key"]
-        decision = decisions[ident]
-        match = decision["best_match"]
-        if (decision["threshold"] != .55 or decision["interest_model_revision"] != generation.model_revision or
-            match["interest_id"] != row["primary_center_id"] or match["center_cosine"] != row["center_cosine"]):
-            raise ValueError("candidate recall evidence mismatch")
-        abstract = clean(metadata.get(ident, {}).get("abstract")) or ""
+        original = candidates.get(ident, {})
+        original = original if isinstance(original, dict) and original.get("title") == row["title"] else {}
+        entry = metadata.get(ident, {})
+        abstract = verified_abstract(original.get("abstract")) or clean(entry.get("abstract")) or ""
+        decision = decisions.get(ident, {})
+        match = decision.get("best_match")
+        match = match if isinstance(match, dict) else {}
+        verified = (quality_ready and decision.get("threshold") == .55 and
+            decision.get("interest_model_revision") == evidence.interest_model_revision and
+            match.get("interest_id") == row["primary_center_id"] and
+            match.get("center_cosine") == row["center_cosine"])
         rows.append(dict(work_key=ident, title=clean(row["title"]) or row["title"], abstract=abstract,
             primary_center_id=row["primary_center_id"], center_cosine=row["center_cosine"],
-            latent_auto_rank=rank, final_recommended=ident in final, final_rank=final.get(ident),
-            abstract_source=metadata.get(ident, {}).get("abstract_source"), venue=row.get("venue") or ""))
-    sampled = [r for r in rows if r["final_recommended"]]
-    used_centers = {r["primary_center_id"] for r in sampled}
-    records = {r.key: r for r in generation.input_records}
-    contexts = {}
-    for center in generation.centers:
-        if center.interest_id not in used_centers:
-            continue
-        contexts[center.interest_id] = [dict(title=clean(records[k].title) or "",
-            abstract=clean(records[k].abstract) or "") for k in center.representative_items[:3]]
+            latent_auto_rank=rank, final_recommended=True, final_rank=rank,
+            abstract_source=entry.get("abstract_source"), venue=row.get("venue") or "",
+            **({} if verified else {"quality_skip_reason": "quality_evidence_unavailable"})))
+    if any(r.get("quality_skip_reason") for r in rows):
+        warnings.append("AI_QUALITY_EVIDENCE_UNAVAILABLE")
     return dict(schema_name="zotwatch-local-llm-input", schema_version=1, run_id=run.run_id,
-        interest_model_revision=generation.model_revision, threshold=.55,
-        source_sha256={k: sha256(Path(v).read_bytes()).hexdigest() for k, v in
-            dict(result=result_path, diagnostic=diagnostic_path, metadata=metadata_path,
-                 generation=generation_path, model=model_path).items()},
-        translations=[r for r in rows if r["final_recommended"]], candidates=sampled, contexts=contexts,
+        interest_model_revision=evidence.interest_model_revision, threshold=.55,
+        source_sha256={"result": sha256(Path(result_path).read_bytes()).hexdigest(),
+            **({"diagnostic": hashes[str(diagnostic_path)]} if str(diagnostic_path) in hashes else {})},
+        translations=rows, candidates=rows, contexts=contexts,
+        preparation_warnings=sorted(set(warnings)),
         sample_policy="original final Top 30 only; unchanged order")
 
 

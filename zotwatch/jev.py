@@ -195,8 +195,12 @@ def evaluate_jev(config, records, cache_path):
             for row, _ in batch:
                 results[row['id']] = {'status': code}
     if any(r['status'] == 'succeeded' for r in results.values()):
-        cache = dict(sorted(cache.items(), key=lambda kv: kv[1].get('recorded_at', ''), reverse=True)[:2000])
-        save_json(path, dict(schema_name='zotwatch-local-jev-cache', schema_version=1, entries=cache))
+        cache = dict(sorted(((k, v) for k, v in cache.items() if isinstance(v, dict)),
+            key=lambda kv: str(kv[1].get('recorded_at', '')), reverse=True)[:2000])
+        try:
+            save_json(path, dict(schema_name='zotwatch-local-jev-cache', schema_version=1, entries=cache))
+        except (OSError, ValueError):
+            metadata['cache_write_failed'] = True
     by_id = {r['id']: r for r in records}
     for ident, value in results.items():
         if 'native' in value:

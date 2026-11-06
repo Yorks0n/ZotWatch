@@ -48,7 +48,7 @@ class LatentRecallRuntime:
             raise LatentRecallUnavailable("LATENT_RECALL_CANDIDATE_BUDGET")
         records, missing = [], set()
         for key, candidate in by_key.items():
-            if not candidate.abstract or not candidate.abstract.strip():
+            if not candidate.title.strip() and not (candidate.abstract or "").strip():
                 missing.add(key)
             else:
                 records.append({"id": key, "title": candidate.title, "abstract": candidate.abstract})

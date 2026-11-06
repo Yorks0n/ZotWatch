@@ -133,7 +133,7 @@ def load_final(source, run_id):
     return apply_delivery_sidecar(final, optional) if auto and optional is not None else final
 
 
-def apply_delivery_sidecar(final, value):
+def apply_delivery_sidecar(final, value, *, verify_source=True):
     """Validate a closed public projection bound to this exact immutable result."""
     try:
         fields = {"schema_name", "schema_version", "run_id", "source_final_sha256", "retained_work_keys", "papers"}
@@ -141,8 +141,8 @@ def apply_delivery_sidecar(final, value):
             or value.get("output_mode", "bilingual") not in ("english", "bilingual", "chinese")
             or value["schema_name"] != "zotwatch-staging-rss-ai" or value["schema_version"] != 1
             or value["run_id"] != final["run_id"]
-            or value["source_final_sha256"] != hashlib.sha256(json.dumps(final, ensure_ascii=False,
-                sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()):
+            or (verify_source and value["source_final_sha256"] != hashlib.sha256(json.dumps(final, ensure_ascii=False,
+                sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest())):
             raise ValueError("Wrong delivery source")
         keys = value["retained_work_keys"]
         original = final["recommendations"]

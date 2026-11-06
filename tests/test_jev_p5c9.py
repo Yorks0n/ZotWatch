@@ -54,19 +54,20 @@ def test_native_shape_privacy_and_success_cache(tmp_path, native_http):
     assert PAPERS == before and first['filtered_recommendations'] == PAPERS
     assert first['decision_counts'] == {'keep': 1, 'review': 1}
     assert first['metadata']['usage'] == {'input_tokens': 123, 'output_tokens': 12}
-    assert second['metadata']['requests'] == 0 and second['metadata']['cache_hits'] == 2
+    assert second['metadata']['requests'] == 0 and second['metadata']['cache_hits'] == 1
+    assert second['judgments'][1]['llm_status'] == 'no_verified_abstract'
     url, request = native_http[0]
     assert url == jev.ENDPOINT and request['allow_redirects'] is False
     assert request['headers'] == {'Authorization': 'Bearer secret-native-key'}
     payload = request['json']
     assert set(payload) == {'model', 'state', 'questions'} and payload['model'] == 'jev-latest'
-    assert set(payload['state']) == {'p1', 'p2'} and payload['state']['p1']['journal'] == 'Journal A'
+    assert set(payload['state']) == {'p1'} and payload['state']['p1']['journal'] == 'Journal A'
     assert len(payload['state']['p1']['representatives'][0]['abstract']) == 900
     assert 'doi:' not in json.dumps(payload) and 'secret-native-key' not in json.dumps(first)
     assert first['judgments'][0]['reason_source'].startswith('local mapping')
     assert first['judgments'][0]['relevance'] == 'not_assessed'
     changed = copy.deepcopy(PAPERS); changed[0]['venue'] = 'Journal C'
-    assert llm.shadow(config(), changed, CONTEXTS, path)['metadata']['cache_hits'] == 1
+    assert llm.shadow(config(), changed, CONTEXTS, path)['metadata']['cache_hits'] == 0
     monkeypatch = pytest.MonkeyPatch()
     try:
         monkeypatch.setattr(jev, 'VERSION', 'new-rules')
@@ -118,18 +119,30 @@ def test_llm_selection_never_initializes_jev(tmp_path, monkeypatch):
 
 def test_partial_failure_keeps_success_cache_but_applies_no_exclusions(tmp_path, monkeypatch, native_http):
     cfg = config(features={'shadow': {'enabled': True, 'provider': 'jev', 'batch_size': 1}})
+    papers = copy.deepcopy(PAPERS)
+    papers[1]['abstract'] = 'Service error for this verified abstract.'
     def post(url, **kw):
-        if kw['json']['state']['p1']['abstract'] == '':
+        if kw['json']['state']['p1']['abstract'] == papers[1]['abstract']:
             return SimpleNamespace(status_code=422, content=b'error')
         data = dict(model='jev-resolved', answers={'p1': answer('mismatch_exclude')})
         return SimpleNamespace(status_code=200, content=b'json', json=lambda: data)
     monkeypatch.setattr(jev.requests, 'post', post)
     path = tmp_path / 'cache.json'
-    output = llm.shadow(cfg, PAPERS, CONTEXTS, path, client_factory=no_llm)
-    assert output['filtered_recommendations'] == PAPERS and output['excluded'] == []
+    output = llm.shadow(cfg, papers, CONTEXTS, path, client_factory=no_llm)
+    assert output['filtered_recommendations'] == papers and output['excluded'] == []
     assert len(json.loads(path.read_text())['entries']) == 1
-    again = llm.shadow(cfg, PAPERS, CONTEXTS, path, client_factory=no_llm)
+    again = llm.shadow(cfg, papers, CONTEXTS, path, client_factory=no_llm)
     assert again['metadata']['cache_hits'] == 1 and again['fallback_original_top20']
+
+
+def test_native_success_survives_cache_write_failure(tmp_path, monkeypatch, native_http):
+    def fail(*args):
+        raise OSError('Cache write failed')
+    monkeypatch.setattr(jev, 'save_json', fail)
+    output = llm.shadow(config(), PAPERS, CONTEXTS, tmp_path/'cache.json')
+    assert not output['fallback_original_top20']
+    assert output['metadata']['cache_write_failed']
+    assert output['judgments'][0]['llm_status'] == 'succeeded'
 
 
 def test_native_transient_retry_uses_backoff_and_never_other_provider(tmp_path, monkeypatch, native_http):

@@ -27,7 +27,7 @@ def configuration(**updates):
 
 PAPERS = [dict(work_key="doi:a", title="Gene ABC1 increased by 2.5-fold", abstract="Observed at 25 °C.",
     primary_center_id="center-a", center_cosine=.7, latent_auto_rank=1, final_recommended=True),
-    dict(work_key="doi:b", title="Method comparison", abstract="", primary_center_id="center-a",
+    dict(work_key="doi:b", title="Method comparison", abstract="Methods were compared.", primary_center_id="center-a",
          center_cosine=.6, latent_auto_rank=2, final_recommended=True)]
 CONTEXTS = {"center-a": [dict(title="PRIVATE title", abstract="PRIVATE abstract " * 200)]}
 
@@ -88,7 +88,7 @@ def test_batch_cache_bound_to_text_model_endpoint_and_prompt(tmp_path, monkeypat
     config, path = configuration(), tmp_path / "cache.json"
     first = llm.translate(config, PAPERS, path, client_factory=FakeClient)
     assert first["metadata"]["requests"] == 1
-    assert first["papers"][1]["abstract_zh"] == ""
+    assert first["papers"][1]["status"] == "succeeded"
     second = llm.translate(config, PAPERS, path, client_factory=FakeClient)
     assert second["metadata"]["cache_hits"] == 2 and len(FakeClient.calls) == 1
     changed = copy.deepcopy(PAPERS)
@@ -134,16 +134,16 @@ def test_item_and_request_budgets_preserve_original_on_fallback(tmp_path):
     assert result["papers"][2]["title_en"] == PAPERS[0]["title"]
 
 
-def test_body_like_source_stays_local_and_only_title_is_sent(tmp_path):
+def test_body_like_source_stays_local_and_skips_translation(tmp_path):
     papers = copy.deepcopy(PAPERS[:1])
     papers[0]["abstract"] = "Private body-like source. " * 400
     FakeClient.calls = []
     result = llm.translate(configuration(), papers, tmp_path / "cache.json", client_factory=FakeClient)
-    assert FakeClient.calls[0][1][0]["abstract"] == ""
+    assert FakeClient.calls == []
     row = result["papers"][0]
     assert row["abstract_en"] == papers[0]["abstract"]
     assert row["status"] == "source_text_requires_review"
-    assert row["title_zh"] and row["abstract_zh"] is None
+    assert row["title_zh"] is None and row["abstract_zh"] is None
 
 
 @pytest.mark.parametrize("failure", ["api_unavailable", "wrong_id", "invalid_enum"])

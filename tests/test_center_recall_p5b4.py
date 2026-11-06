@@ -1,5 +1,8 @@
 from copy import deepcopy
+from hashlib import sha256
 import json
+import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -123,7 +126,47 @@ def test_closed_identity_revision_unit_and_checksum_contract(tmp_path):
     with pytest.raises(ValueError,match='checksum'):load_center_model(path)
 
 
-def test_title_only_candidate_rejected_before_encoder_loading():
-    with pytest.raises(ValueError,match='abstract required'):
-        center_recall.encode_candidates(model(),'no-cache',[{'id':'x','title':'title','abstract':None}])
+@pytest.mark.parametrize("abstract", [None, "", " \n\t"])
+def test_title_only_candidate_reaches_encoder(tmp_path, monkeypatch, abstract):
+    from zotwatch.interests import embedding_benchmark
+
+    weights = b"synthetic encoder weights"
+    raw = model().model_dump()
+    raw["encoder"]["artifact_sha256"] = {"model.safetensors": sha256(weights).hexdigest()}
+    raw["embedding_text_fingerprint"] = digest(raw["encoder"])
+    m = CenterRecallModel.model_validate(raw)
+    snapshot = tmp_path / ("models--" + m.encoder.model_identifier.replace("/", "--")) / "snapshots" / m.encoder.model_revision
+    snapshot.mkdir(parents=True)
+    (snapshot / "model.safetensors").write_bytes(weights)
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(set_num_threads=lambda _: None))
+    monkeypatch.setitem(sys.modules, "sentence_transformers",
+        SimpleNamespace(SentenceTransformer=lambda *a, **kw: object()))
+    observed = []
+
+    def encode(_, texts):
+        observed.extend(texts)
+        return unit([[1., 0.], [0., 1.]]), {"text_policy": m.encoder.text_policy}
+
+    monkeypatch.setattr(embedding_benchmark, "encode_existing_policy", encode)
+    vectors, metadata = center_recall.encode_candidates(m, tmp_path, [
+        {"id": "title-only", "title": "  Plant immunity  ", "abstract": abstract},
+        {"id": "with-abstract", "title": "  Water transport  ", "abstract": "  Full abstract.  "},
+    ])
+    assert observed == ["Plant immunity", "Water transport\nFull abstract."]
+    assert vectors.shape == (2, 384)
+    assert metadata["embedding_text_fingerprint"] == m.embedding_text_fingerprint
+
+
+@pytest.mark.parametrize("record", [
+    {"id": "x", "title": "", "abstract": None},
+    {"id": "x", "title": " \t", "abstract": "\n"},
+    {"id": "x", "title": None, "abstract": "text"},
+    {"id": "x", "title": "title", "abstract": 123},
+])
+def test_invalid_candidate_text_rejected_before_encoder_loading(record):
+    with pytest.raises(ValueError, match="insufficient_semantic_text"):
+        center_recall.encode_candidates(model(), "no-cache", [record])
+
+
+def test_empty_candidate_batch_does_not_load_encoder():
     assert center_recall.encode_candidates(model(),'no-cache',[])[0].shape==(0,384)
